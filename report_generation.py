@@ -598,7 +598,7 @@ def send_email_with_report(html_content, attachment_path, plot_image_path=os.pat
         msg = MIMEMultipart('related')
         msg['Subject'] = "AI Generated Coin Analysis Report"
         msg['From'] = EMAIL_FROM
-        msg['Bcc'] = EMAIL_TO
+        msg['To'] = EMAIL_TO
 
         part = MIMEText(html_content, 'html')
         msg.attach(part)
