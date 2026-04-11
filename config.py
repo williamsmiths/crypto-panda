@@ -1,9 +1,15 @@
 import os
+import logging
 from dotenv import load_dotenv  # Allows loading environment variables from a .env file
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer  # Sentiment analysis tool
 
+_logger = logging.getLogger(__name__)
+
+# Derive base directory from this file's location
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # Path to your .env file where secrets and config are stored
-DOT_ENV_PATH = "/home/ec2-user/crypto-panda/crypto-panda/.env"
+DOT_ENV_PATH = os.path.join(_BASE_DIR, '.env')
 
 # Load environment variables from the specified .env file
 load_dotenv(dotenv_path=DOT_ENV_PATH)
@@ -12,10 +18,10 @@ load_dotenv(dotenv_path=DOT_ENV_PATH)
 SAN_API_KEY = os.getenv('SAN_API_KEY')
 
 # Directory to store logs
-LOG_DIR = '../logs/'
+LOG_DIR = os.path.join(_BASE_DIR, '..', 'logs')
 
 # Directory to store data files (e.g., price data, tickers)
-DATA_DIR = '../data/'
+DATA_DIR = os.path.join(_BASE_DIR, '..', 'data')
 
 # Keywords used to detect bullish or surge-related language in crypto news
 surge_words = [
@@ -57,11 +63,11 @@ SMTP_SERVER = os.getenv('SMTP_SERVER')         # SMTP server address (e.g., smtp
 SMTP_USERNAME = os.getenv('SMTP_USERNAME')     # SMTP login username
 SMTP_PASSWORD = os.getenv('SMTP_PASSWORD')     # SMTP login password
 SMTP_PORT = 587                                # SMTP port (587 is standard for TLS)
-MAX_POSSIBLE_SCORE = 22 # Number of possible analysis scores
+MAX_POSSIBLE_SCORE = 21 # Number of possible analysis scores (updated after rebalancing)
 
 # File paths used in the analysis pipeline
-RESULTS_FILE = LOG_DIR + "/surging_coins.csv"          # Where analysis results are saved
-CRYPTO_NEWS_TICKERS = DATA_DIR + "/tickers.csv"        # List of tickers for filtering news
+RESULTS_FILE = os.path.join(LOG_DIR, "surging_coins.csv")    # Where analysis results are saved
+CRYPTO_NEWS_TICKERS = os.path.join(DATA_DIR, "tickers.csv") # List of tickers for filtering news
 
 # Thresholds used to score coins
 FEAR_GREED_THRESHOLD = 60               # Only consider coins if fear/greed index > 60
@@ -79,7 +85,7 @@ CUMULATIVE_SCORE_REPORTING_THRESHOLD = 40
 
 # Aurora PostgreSQL configuration (used to log or retrieve coin scores)
 AURORA_HOST = os.getenv('AURORA_HOST')              # Database host endpoint
-AURORA_PORT = os.getenv('AURORA_PORT', 5432)        # Default port for PostgreSQL
+AURORA_PORT = int(os.getenv('AURORA_PORT', '5432'))   # Default port for PostgreSQL
 AURORA_DB = os.getenv('AURORA_DB')                  # Name of the database
 AURORA_USER = os.getenv('AURORA_USER')              # Database user
 AURORA_PASSWORD = os.getenv('AURORA_PASSWORD')      # Database password
@@ -89,3 +95,28 @@ COIN_PAPRIKA_API_KEY = os.getenv('COIN_PAPRIKA_API_KEY')
 
 # Initialize the VADER sentiment analyzer (used to evaluate sentiment in news headlines/text)
 analyzer = SentimentIntensityAnalyzer()
+
+# ----------------------------
+# Startup env var validation
+# ----------------------------
+
+_REQUIRED_VARS = {
+    "COIN_PAPRIKA_API_KEY": COIN_PAPRIKA_API_KEY,
+    "SAN_API_KEY": SAN_API_KEY,
+    "AURORA_HOST": AURORA_HOST,
+    "AURORA_DB": AURORA_DB,
+    "AURORA_USER": AURORA_USER,
+    "AURORA_PASSWORD": AURORA_PASSWORD,
+    "EMAIL_FROM": EMAIL_FROM,
+    "EMAIL_TO": EMAIL_TO,
+    "SMTP_SERVER": SMTP_SERVER,
+    "SMTP_USERNAME": SMTP_USERNAME,
+    "SMTP_PASSWORD": SMTP_PASSWORD,
+}
+
+_missing = [name for name, val in _REQUIRED_VARS.items() if not val]
+if _missing:
+    _logger.warning(
+        "Missing environment variables (features that need them will fail): %s",
+        ", ".join(_missing),
+    )

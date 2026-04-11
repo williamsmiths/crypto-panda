@@ -36,54 +36,12 @@ from config import (
 from api_clients import call_with_retries
 
 # ============================
-# Logging (console + single rolling file per script)
+# Logging
 # ============================
 
-def setup_logging(name: str,
-                  log_dir: Union[str, Path] = None,
-                  level: str = None) -> logging.Logger:
-    """
-    Create a logger that writes to console and a single per-script logfile.
-    - File path: <log_dir>/<script_stem>.log (overwrites each run)
-    - UTC timestamps, ISO-like format
-    """
-    base_dir = Path(__file__).resolve().parent
-    log_dir = Path(log_dir or (base_dir / "../logs")).resolve()
-    log_dir.mkdir(parents=True, exist_ok=True)
+from logging_config import setup_logging
 
-    log_path = log_dir / f"{Path(__file__).stem}.log"
-
-    level_name = (level or os.getenv("LOG_LEVEL", "INFO")).upper()
-    level_val = getattr(logging, level_name, logging.INFO)
-
-    logger = logging.getLogger(name)
-    logger.setLevel(level_val)
-    logger.propagate = False
-
-    # Clear existing handlers (avoid dupes on re-imports)
-    for h in list(logger.handlers):
-        logger.removeHandler(h)
-
-    fmt = "%(asctime)sZ [%(levelname)s] %(name)s | %(message)s"
-    datefmt = "%Y-%m-%dT%H:%M:%S"
-    formatter = logging.Formatter(fmt=fmt, datefmt=datefmt)
-
-    # Console handler
-    ch = logging.StreamHandler()
-    ch.setLevel(level_val)
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
-
-    # File handler (overwrite each run)
-    fh = logging.FileHandler(str(log_path), mode="w", encoding="utf-8", delay=False)
-    fh.setLevel(level_val)
-    fh.setFormatter(formatter)
-    logger.addHandler(fh)
-
-    logger.info(f"Logging started → {log_path} (level={level_name})")
-    return logger
-
-logger = setup_logging(__name__)
+logger = setup_logging(__name__, caller_file=__file__)
 
 # Ensure LOG_DIR exists for artifacts/flags
 Path(LOG_DIR).mkdir(parents=True, exist_ok=True)
@@ -581,7 +539,7 @@ def gpt4o_summarize_digest_and_extract_tickers(digest_text):
 
     try:
         response = call_with_retries(api_call)
-        response_content = response.choices[0].message['content'].strip()
+        response_content = response['choices'][0]['message']['content'].strip()
         json_match = re.search(r'\{.*\}', response_content, re.DOTALL)
         if json_match:
             json_str = json_match.group(0)

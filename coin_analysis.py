@@ -40,6 +40,10 @@ def calculate_price_change(price_data: pd.Series, period: str = "short", span: i
     else:
         period_data = smoothed_data.tail(90)
 
+    if period_data.empty:
+        logger.warning(f"No price data for period '{period}' after smoothing.")
+        return None
+
     start_price = period_data.iloc[0]
     end_price = period_data.iloc[-1]
 
@@ -65,6 +69,10 @@ def calculate_volume_change(volume_data: pd.Series, period: str = "short", span:
     else:
         period_data = smoothed_data.tail(90)
 
+    if period_data.empty:
+        logger.warning(f"No volume data for period '{period}' after smoothing.")
+        return None
+
     start_volume = period_data.iloc[0]
     end_volume = period_data.iloc[-1]
 
@@ -78,57 +86,13 @@ def calculate_volume_change(volume_data: pd.Series, period: str = "short", span:
 
 
 # ============================
-# Logging (console + single rolling file per script)
+# Logging
 # ============================
 
-def setup_logging(name: str,
-                  log_dir: Union[str, Path] = None,
-                  level: str = None) -> logging.Logger:
-    """
-    Create a logger that writes to console and a single per-script logfile.
-    - File path: <log_dir>/<script_stem>.log (overwrites each run)
-    - UTC timestamps, ISO-like format
-    """
-    base_dir = Path(__file__).resolve().parent
-    log_dir = Path(log_dir or (base_dir / "../logs")).resolve()
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    # Overwrite same file each run (rolling single file per script)
-    log_path = log_dir / f"{Path(__file__).stem}.log"
-
-    # Level from arg or env
-    level_name = (level or os.getenv("LOG_LEVEL", "INFO")).upper()
-    level_val = getattr(logging, level_name, logging.INFO)
-
-    logger = logging.getLogger(name)
-    logger.setLevel(level_val)
-    logger.propagate = False
-
-    # Clear existing handlers (avoid dupes on re-imports)
-    for h in list(logger.handlers):
-        logger.removeHandler(h)
-
-    fmt = "%(asctime)sZ [%(levelname)s] %(name)s | %(message)s"
-    datefmt = "%Y-%m-%dT%H:%M:%S"
-    formatter = logging.Formatter(fmt=fmt, datefmt=datefmt)
-
-    # Console handler
-    ch = logging.StreamHandler()
-    ch.setLevel(level_val)
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
-
-    # File handler (overwrite each run)
-    fh = logging.FileHandler(str(log_path), mode="w", encoding="utf-8", delay=False)
-    fh.setLevel(level_val)
-    fh.setFormatter(formatter)
-    logger.addHandler(fh)
-
-    logger.info(f"Logging started → {log_path} (level={level_name})")
-    return logger
+from logging_config import setup_logging
 
 # Instantiate module logger
-logger = setup_logging(__name__)
+logger = setup_logging(__name__, caller_file=__file__)
 
 # ----------------------------
 # Small time helper
@@ -137,6 +101,47 @@ logger = setup_logging(__name__)
 def utcnow() -> datetime:
     """UTC-aware 'now'."""
     return datetime.now(timezone.utc)
+
+# ----------------------------
+# RSI (Relative Strength Index)
+# ----------------------------
+
+def compute_rsi(price_series: pd.Series, period: int = 14) -> float:
+    """
+    Compute the Relative Strength Index (RSI) for a price series.
+    Returns RSI value 0-100, or 50.0 (neutral) if insufficient data.
+    """
+    if len(price_series) < period + 1:
+        return 50.0  # Neutral if insufficient data
+
+    delta = price_series.diff()
+    gain = delta.where(delta > 0, 0.0)
+    loss = (-delta).where(delta < 0, 0.0)
+
+    avg_gain = gain.rolling(window=period, min_periods=period).mean()
+    avg_loss = loss.rolling(window=period, min_periods=period).mean()
+
+    rs = avg_gain / avg_loss.replace(0, float('inf'))
+    rsi = 100 - (100 / (1 + rs))
+
+    last_rsi = rsi.iloc[-1]
+    return float(last_rsi) if pd.notna(last_rsi) else 50.0
+
+
+def compute_rsi_score(price_series: pd.Series, volume_score: int = 0) -> Tuple[float, str]:
+    """
+    Score based on RSI: oversold (RSI < 30) or strong momentum (RSI > 70 with volume).
+    Returns (score 0-1, explanation).
+    """
+    rsi = compute_rsi(price_series)
+
+    if rsi < 30:
+        return 1.0, f"RSI={rsi:.0f} (oversold, potential bounce)"
+    elif rsi > 70 and volume_score >= 2:
+        return 1.0, f"RSI={rsi:.0f} (strong momentum with volume confirmation)"
+    else:
+        return 0.0, f"RSI={rsi:.0f} (neutral)"
+
 
 # ----------------------------
 # ANALYSIS FUNCTIONS
@@ -354,14 +359,42 @@ def analyze_coin(
         }
 
     santiment_score, santiment_explanation = compute_santiment_score_with_thresholds(santiment_data)
-    santiment_surge_score, santiment_surge_explanation = compute_santiment_surge_metrics(santiment_data)
+    raw_santiment_surge_score, santiment_surge_explanation = compute_santiment_surge_metrics(santiment_data)
+    santiment_surge_score = min(raw_santiment_surge_score, 3)  # Cap at 3 (was 6)
 
     if historical_df_long_term.empty or 'price' not in historical_df_long_term.columns:
         logger.debug(f"No valid price data available for {coin_id}.")
-        return {"coin_id": coin_id, "coin_name": coin_name, "explanation": f"No valid price data available for {coin_id}."}
+        return {
+            "coin_id": coin_id,
+            "coin_name": coin_name,
+            "market_cap": 0,
+            "volume_24h": 0,
+            "price_change_score": 0,
+            "volume_change_score": 0,
+            "tweets": 0,
+            "consistent_growth": "No",
+            "sustained_volume_growth": "No",
+            "fear_and_greed_index": None,
+            "events": 0,
+            "sentiment_score": 0,
+            "surging_keywords_score": 0,
+            "news_digest_score": 0,
+            "trending_score": 0.0,
+            "liquidity_risk": "High",
+            "santiment_score": 0,
+            "santiment_surge_score": 0,
+            "santiment_surge_explanation": "No data",
+            "rsi_score": 0,
+            "rsi_explanation": "No data",
+            "cumulative_score": 0,
+            "cumulative_score_percentage": 0.0,
+            "explanation": f"No valid price data available for {coin_id}.",
+            "coin_news": [],
+            "trend_conflict": "No",
+        }
 
     twitter_df = fetch_twitter_data(coin_id)
-    tweet_score = 1 if not twitter_df.empty else 0
+    tweet_score = min(1.0, len(twitter_df) / 10.0) if not twitter_df.empty else 0
 
     volatility = historical_df_long_term['price'].pct_change().std()
 
@@ -378,7 +411,7 @@ def analyze_coin(
     sustained_volume_growth_score = 1 if sustained_volume_growth else 0
 
     fear_and_greed_index = fetch_fear_and_greed_index()
-    fear_and_greed_score = 1 if fear_and_greed_index is not None and fear_and_greed_index > FEAR_GREED_THRESHOLD else 0
+    fear_and_greed_score = min(1.0, max(0.0, (fear_and_greed_index - 40) / 60.0)) if fear_and_greed_index is not None else 0
 
     events = fetch_coin_events(coin_id)  # already 7d filtered
     recent_events_count = len(events)
@@ -393,7 +426,8 @@ def analyze_coin(
     # Integrate sentiment analysis & surge words
     if not news_df.empty:
         coin_news = news_df[news_df['coin'] == coin_name].copy()
-        sentiment_score = compute_sentiment_for_coin(coin_name, coin_news.to_dict('records'))
+        raw_sentiment = compute_sentiment_for_coin(coin_name, coin_news.to_dict('records'))
+        sentiment_score = min(1.0, max(0.0, raw_sentiment))  # Continuous 0-1 scale
         surge_score, surge_explanation_list = score_surge_words(coin_news, surge_words)
         surge_explanation = "; ".join(surge_explanation_list) if surge_explanation_list else "—"
     else:
@@ -413,13 +447,16 @@ def analyze_coin(
     trending_score = get_fuzzy_trending_score(coin_id, coin_name, trending_coins_scores)
 
     # Recompute santiment score note: already computed above; just reuse
-    trend_conflict_score = 1 if (consistent_monthly_growth_score and not consistent_growth_score) else 0
+    trend_conflict_score = 2 if (consistent_monthly_growth_score and not consistent_growth_score) else 0
+
+    # RSI indicator
+    rsi_score, rsi_explanation = compute_rsi_score(historical_df_long_term['price'], volume_score)
 
     cumulative_score = (
         volume_score + tweet_score + consistent_growth_score + sustained_volume_growth_score +
         fear_and_greed_score + event_score + price_change_score + sentiment_score + surge_score +
         digest_score + trending_score + santiment_score + consistent_monthly_growth_score +
-        trend_conflict_score + santiment_surge_score
+        trend_conflict_score + santiment_surge_score + rsi_score
     )
 
     max_possible_score = MAX_POSSIBLE_SCORE
@@ -446,7 +483,8 @@ def analyze_coin(
         f"Cumulative Surge Score: {cumulative_score} ({cumulative_score_percentage:.2f}%), "
         f"Consistent Monthly Growth: {'Yes' if consistent_monthly_growth_score else 'No'}, "
         f"Trend Conflict: {'Yes' if trend_conflict_score else 'No'} (Monthly growth without short-term support), "
-        f"| Santiment Surge Score: {santiment_surge_score} ({santiment_surge_explanation})"
+        f"| Santiment Surge Score: {santiment_surge_score} ({santiment_surge_explanation}), "
+        f"RSI: {rsi_explanation}"
     )
 
     # Add top 3 news headlines
@@ -479,6 +517,8 @@ def analyze_coin(
         "santiment_score": santiment_score,
         "santiment_surge_score": santiment_surge_score,
         "santiment_surge_explanation": santiment_surge_explanation,
+        "rsi_score": rsi_score,
+        "rsi_explanation": rsi_explanation,
         "cumulative_score": cumulative_score,
         "cumulative_score_percentage": round(cumulative_score_percentage, 2),
         "explanation": explanation,
@@ -624,10 +664,16 @@ def score_surge_words(news_df: pd.DataFrame, surge_words: List[str]) -> Tuple[in
                 article_explanation = []
 
                 for word in surge_words:
-                    match_score = fuzz.partial_ratio(word.lower(), description.lower())
-                    if match_score > 75:
-                        surge_score += match_score / 100.0
-                        article_explanation.append(f"Matched word '{word}' with score {match_score}%")
+                    # Use exact word boundary matching for short words to reduce false positives
+                    if len(word) <= 4:
+                        if re.search(r'\b' + re.escape(word.lower()) + r'\b', description.lower()):
+                            surge_score += 1.0
+                            article_explanation.append(f"Matched word '{word}' (exact)")
+                    else:
+                        match_score = fuzz.partial_ratio(word.lower(), description.lower())
+                        if match_score > 85:
+                            surge_score += match_score / 100.0
+                            article_explanation.append(f"Matched word '{word}' with score {match_score}%")
 
                 if surge_score > 0:
                     explanation.append(f"Article: '{news_item.get('title', '')}' → {', '.join(article_explanation)}")
@@ -663,12 +709,12 @@ def classify_market_cap(market_cap: int) -> str:
         return "Small"
 
 
-def compute_sentiment_for_coin(coin_name: str, news_data: List[Mapping[str, str]]) -> int:
+def compute_sentiment_for_coin(coin_name: str, news_data: List[Mapping[str, str]]) -> float:
     """
-    Computes the sentiment score for a given coin based on its news data.
+    Computes the average compound sentiment for a given coin based on its news data.
 
     Returns:
-        1 if avg compound > 0.5 else 0.
+        Average VADER compound sentiment (-1.0 to 1.0), or 0.0 if no data.
     """
     sentiments: List[float] = []
     for news_item in news_data:
@@ -677,8 +723,7 @@ def compute_sentiment_for_coin(coin_name: str, news_data: List[Mapping[str, str]
             sentiment_score = float(analyzer.polarity_scores(description)['compound'])
             sentiments.append(sentiment_score)
 
-    average_sentiment = (sum(sentiments) / len(sentiments)) if sentiments else 0.0
-    return 1 if average_sentiment > 0.5 else 0
+    return (sum(sentiments) / len(sentiments)) if sentiments else 0.0
 
 
 def compute_santiment_score_with_thresholds(santiment_data: Mapping[str, float]) -> Tuple[int, str]:

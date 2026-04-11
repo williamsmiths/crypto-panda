@@ -69,51 +69,12 @@ if SAN_API_KEY:
 _coinpaprika_client = Coinpaprika.Client(api_key=COIN_PAPRIKA_API_KEY) if COIN_PAPRIKA_API_KEY else Coinpaprika.Client()
 
 # ----------------------------
-# Logging (console + single rolling file per script)
+# Logging
 # ----------------------------
 
-def setup_logging(name: str,
-                  log_dir: Union[str, Path] = None,
-                  level: str = None) -> logging.Logger:
-    """
-    Create a logger that writes to console and a single per-script logfile.
-    File path: <log_dir>/<script_stem>.log (overwrites each run)
-    """
-    base_dir = Path(__file__).resolve().parent
-    log_dir = Path(log_dir or (base_dir / "../logs")).resolve()
-    log_dir.mkdir(parents=True, exist_ok=True)
+from logging_config import setup_logging
 
-    log_path = log_dir / f"{Path(__file__).stem}.log"
-
-    level_name = (level or os.getenv("LOG_LEVEL", "INFO")).upper()
-    level_val = getattr(logging, level_name, logging.INFO)
-
-    logger = logging.getLogger(name)
-    logger.setLevel(level_val)
-    logger.propagate = False
-
-    # Prevent duplicate handlers on reload
-    for h in list(logger.handlers):
-        logger.removeHandler(h)
-
-    fmt = "%(asctime)sZ [%(levelname)s] %(name)s | %(message)s"
-    datefmt = "%Y-%m-%dT%H:%M:%S"
-    formatter = logging.Formatter(fmt=fmt, datefmt=datefmt)
-
-    ch = logging.StreamHandler()
-    ch.setLevel(level_val)
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
-
-    fh = logging.FileHandler(str(log_path), mode="w", encoding="utf-8", delay=False)
-    fh.setLevel(level_val)
-    fh.setFormatter(formatter)
-    logger.addHandler(fh)
-
-    logger.info(f"Logging started → {log_path} (level={level_name})")
-    return logger
-
-logger = setup_logging(__name__)
+logger = setup_logging(__name__, caller_file=__file__)
 
 # ----------------------------
 # Helpers: time & session
@@ -462,7 +423,9 @@ def fetch_fear_and_greed_index() -> Optional[int]:
             return None
         data = payload.get("data")
         if isinstance(data, list) and data:
-            return int(data[0].get("value"))
+            val = data[0].get("value")
+            if val is not None:
+                return int(val)
         return None
     except Exception as e:
         logger.debug(f"FNG fetch error: {e}")

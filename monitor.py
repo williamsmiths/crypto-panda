@@ -7,7 +7,7 @@ import json
 import pandas as pd
 import logging
 from datetime import datetime, timezone
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from tqdm import tqdm
 import traceback
 from collections import defaultdict
@@ -29,6 +29,7 @@ from data_management import (
     save_result_to_csv,
     retrieve_historical_data_from_aurora,
     save_cumulative_score_to_aurora,
+    save_cumulative_scores_batch,
     create_coin_data_table_if_not_exists,
     load_existing_results,
     load_tickers,
@@ -54,55 +55,13 @@ from config import (
 from coinpaprika import client as Coinpaprika
 
 # ============================
-# Logging (console + single rolling file per script)
+# Logging
 # ============================
 
-def setup_logging(name: str,
-                  log_dir: Union[str, Path] = None,
-                  level: str = None) -> logging.Logger:
-    """
-    Create a logger that writes to console and a single per-script logfile.
-    - File path: <log_dir>/<script_stem>.log (overwrites each run)
-    - UTC timestamps, ISO-like format
-    """
-    base_dir = Path(__file__).resolve().parent
-    log_dir = Path(log_dir or (base_dir / "../logs")).resolve()
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    log_path = log_dir / f"{Path(__file__).stem}.log"
-
-    level_name = (level or os.getenv("LOG_LEVEL", "INFO")).upper()
-    level_val = getattr(logging, level_name, logging.INFO)
-
-    logger = logging.getLogger(name)
-    logger.setLevel(level_val)
-    logger.propagate = False
-
-    # Clear existing handlers (avoid dupes on re-imports)
-    for h in list(logger.handlers):
-        logger.removeHandler(h)
-
-    fmt = "%(asctime)sZ [%(levelname)s] %(name)s | %(message)s"
-    datefmt = "%Y-%m-%dT%H:%M:%S"
-    formatter = logging.Formatter(fmt=fmt, datefmt=datefmt)
-
-    # Console handler
-    ch = logging.StreamHandler()
-    ch.setLevel(level_val)
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
-
-    # File handler (overwrite each run)
-    fh = logging.FileHandler(str(log_path), mode="w", encoding="utf-8", delay=False)
-    fh.setLevel(level_val)
-    fh.setFormatter(formatter)
-    logger.addHandler(fh)
-
-    logger.info(f"Logging started → {log_path} (level={level_name})")
-    return logger
+from logging_config import setup_logging
 
 # Instantiate module logger
-logger = setup_logging(__name__, log_dir=LOG_DIR)
+logger = setup_logging(__name__, log_dir=LOG_DIR, caller_file=__file__)
 
 # ----------------------------
 # Setup
@@ -185,11 +144,8 @@ def process_single_coin(
         score_usage["cumulative_score"].append(int(result.get("cumulative_score", 0) or 0))
         score_usage["cumulative_score_percentage"].append(float(result.get("cumulative_score_percentage", 0) or 0))
 
-        # Persist
+        # Persist to CSV (DB batch save happens after all coins are processed)
         save_result_to_csv(result)
-        save_cumulative_score_to_aurora(
-            result["coin_id"], result["coin_name"], result["cumulative_score_percentage"]
-        )
 
         # Audit
         audit_entry = {
@@ -222,8 +178,8 @@ def process_single_coin(
         return result
 
     except Exception as e:
-        logger.debug(f"Error processing {coin.get('name')} ({coin.get('id')}): {e}")
-        logger.debug(traceback.format_exc())
+        logger.error(f"Error processing {coin.get('name')} ({coin.get('id')}): {e}")
+        logger.error(traceback.format_exc())
         return None
 
 
@@ -322,8 +278,9 @@ def monitor_coins_and_send_report():
     score_usage: defaultdict = defaultdict(list)
 
     with ThreadPoolExecutor(max_workers=8) as executor:
-        futures = executor.map(
-            lambda c: process_single_coin(
+        future_to_coin = {
+            executor.submit(
+                process_single_coin,
                 c,
                 existing_results,
                 tickers_dict,
@@ -333,12 +290,28 @@ def monitor_coins_and_send_report():
                 end_date,
                 score_usage,
                 coin_audit_log,
-            ),
-            coins_to_monitor,
-        )
-        results_list = [
-            r for r in tqdm(futures, total=len(coins_to_monitor), desc="Processing Coins") if r is not None
-        ]
+            ): c
+            for c in coins_to_monitor
+        }
+        results_list = []
+        for future in tqdm(as_completed(future_to_coin), total=len(future_to_coin), desc="Processing Coins"):
+            try:
+                result = future.result(timeout=120)
+                if result is not None:
+                    results_list.append(result)
+            except FuturesTimeoutError:
+                coin = future_to_coin[future]
+                logger.error(f"Timeout processing {coin.get('name')} ({coin.get('id')})")
+            except Exception as e:
+                coin = future_to_coin[future]
+                logger.error(f"Unhandled error for {coin.get('name')} ({coin.get('id')}): {e}")
+
+    # Batch save all cumulative scores to Aurora in a single connection
+    aurora_scores = [
+        (r["coin_id"], r["coin_name"], r["cumulative_score_percentage"])
+        for r in results_list
+    ]
+    save_cumulative_scores_batch(aurora_scores)
 
     if not results_list:
         logger.debug("No coin results produced; exiting after score summary.")
@@ -407,10 +380,13 @@ def monitor_coins_and_send_report():
 
             if os.path.exists(results_file):
                 try:
-                    os.remove(results_file)
-                    logger.debug(f"{results_file} has been deleted successfully.")
+                    archive_dir = os.path.join(LOG_DIR, "processed")
+                    os.makedirs(archive_dir, exist_ok=True)
+                    archived_path = os.path.join(archive_dir, os.path.basename(results_file))
+                    os.rename(results_file, archived_path)
+                    logger.debug(f"{results_file} archived to {archived_path}.")
                 except Exception as e:
-                    logger.debug(f"Failed to delete {results_file}: {e}")
+                    logger.debug(f"Failed to archive {results_file}: {e}")
 
             summarize_scores(score_usage, output_dir=LOG_DIR)
 

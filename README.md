@@ -54,14 +54,14 @@ This table outlines all the metrics analyzed for each cryptocurrency, grouped by
 | 📈 Price            | Price Change Score                     | `price_change_score`                       | 0–3                    | Momentum over short, medium, and long-term windows |
 | 📈 Price            | Consistent Weekly Growth               | `consistent_growth_score`                  | 0–1                    | ≥ 4 up-days in last 7 |
 | 📈 Price            | Consistent Monthly Growth              | `consistent_monthly_growth`                | 0–1                    | ≥ 18 up-days in last 30 |
-| 📈 Price            | Trend Conflict                         | `trend_conflict_score`                     | 0–1                    | Monthly uptrend without short-term support |
+| 📈 Price            | Trend Conflict                         | `trend_conflict_score`                     | 0–2                    | Monthly uptrend without short-term support (early breakout signal) |
 | 📊 Volume           | Volume Change Score                    | `volume_change_score`                      | 0–3                    | Surges over 3 timeframes based on market cap/volatility |
 | 📊 Volume           | Sustained Volume Growth                | `sustained_volume_growth`                  | 0–1                    | ≥ 4 volume-up days in last 7 |
 | 📉 Liquidity        | Liquidity Risk                         | `liquidity_risk`                           | Low/Medium/High        | Based on 24h volume vs market cap tier |
-| 💬 Sentiment        | Tweet Score                            | `tweet_score`                              | 0–1                    | Tweets found via CoinPaprika |
-| 💬 Sentiment        | News Sentiment Score                   | `sentiment_score`                          | 0–1                    | VADER sentiment of news (compound > 0.5 = 1) |
-| 💬 Sentiment        | Surge Keywords Score                   | `surging_keywords_score`                   | 0–1                    | Detects bullish phrases in recent news |
-| 💬 Sentiment        | Fear & Greed Score                     | `fear_and_greed_score`                     | 0–1                    | Based on Alt.me index crossing threshold |
+| 💬 Sentiment        | Tweet Score                            | `tweet_score`                              | 0–1 (continuous)       | Scales by tweet count (0-10+ tweets) |
+| 💬 Sentiment        | News Sentiment Score                   | `sentiment_score`                          | 0–1 (continuous)       | VADER compound sentiment on continuous scale |
+| 💬 Sentiment        | Surge Keywords Score                   | `surging_keywords_score`                   | 0–1                    | Detects bullish phrases in recent news (tightened matching) |
+| 💬 Sentiment        | Fear & Greed Score                     | `fear_and_greed_score`                     | 0–1 (continuous)       | Continuous scale capturing both oversold and overbought |
 | 📰 News/Events       | Digest Mention                         | `digest_score`                             | 0–1                    | If coin is in curated Crypto Digest |
 | 📰 News/Events       | Trending Score                         | `trending_score`                           | 0–2                    | Trending mentions from CryptoNewsAPI |
 | 📰 News/Events       | Event Score                            | `event_score`                              | 0–1                    | Coin has events in last 7 days |
@@ -73,9 +73,10 @@ This table outlines all the metrics analyzed for each cryptocurrency, grouped by
 | 🧠 Santiment         | Tx Volume Change (1d)                  | `transaction_volume_usd_change_1d`         | %                      | Change in USD volume day-over-day |
 | 🧠 Santiment         | Weighted Sentiment (1d)                | `sentiment_weighted_total`                 | Score (-1 to +1)       | Weighted community + market sentiment |
 | 🧠 Santiment         | Santiment Score                        | `santiment_score`                          | 0–2                    | Binary from dev + address increase |
-| 🧠 Santiment         | Santiment Surge Score                  | `santiment_surge_score`                    | 0–6                    | Composite of 6 Santiment surge metrics |
+| 🧠 Santiment         | Santiment Surge Score                  | `santiment_surge_score`                    | 0–3                    | Composite of 6 Santiment surge metrics (capped at 3) |
 | 🧠 Santiment         | Santiment Surge Explanation            | `santiment_surge_explanation`              | Text                   | Explains triggers for surge score |
-| ✅ Final             | Cumulative Score                       | `cumulative_score`                         | 0–22                   | Sum of all metrics |
+| 📐 Technical         | RSI Score                              | `rsi_score`                                | 0–1                    | 14-day RSI: oversold bounce or momentum with volume |
+| ✅ Final             | Cumulative Score                       | `cumulative_score`                         | 0–21                   | Sum of all metrics |
 | ✅ Final             | Cumulative Score %                     | `cumulative_score_percentage`              | 0–100%                | Normalized version of final score |
 | 🧾 Bonus             | News Headlines                         | `coin_news`                                | List of dicts         | Top 3 recent headlines for the coin |
 | 🧾 Bonus             | Full Explanation                       | `explanation`                              | String                 | Human-readable summary of metrics |
@@ -101,19 +102,13 @@ pip install -r requirements.txt
 
 ## 🔐 Environment Variables
 
-Create a `.env` file with the following:
+Copy the example file and fill in your values:
 
-```env
-COIN_PAPRIKA_API_KEY=
-OPENAI_API_KEY=
-CRYPTO_NEWS_API_KEY=
-SAN_API_KEY=
-EMAIL_FROM=
-EMAIL_TO=
-SMTP_SERVER=
-SMTP_USERNAME=
-SMTP_PASSWORD=
+```bash
+cp .env.example .env
 ```
+
+See [`.env.example`](.env.example) for all required and optional variables including API keys, SMTP, and Aurora DB credentials.
 
 ---
 
