@@ -121,11 +121,16 @@ def compute_rsi(price_series: pd.Series, period: int = 14) -> float:
     avg_gain = gain.rolling(window=period, min_periods=period).mean()
     avg_loss = loss.rolling(window=period, min_periods=period).mean()
 
-    rs = avg_gain / avg_loss.replace(0, float('inf'))
-    rsi = 100 - (100 / (1 + rs))
+    last_gain = avg_gain.iloc[-1]
+    last_loss = avg_loss.iloc[-1]
 
-    last_rsi = rsi.iloc[-1]
-    return float(last_rsi) if pd.notna(last_rsi) else 50.0
+    if pd.isna(last_gain) or pd.isna(last_loss):
+        return 50.0
+    if last_loss == 0:
+        return 100.0 if last_gain > 0 else 50.0
+
+    rs = last_gain / last_loss
+    return float(100 - (100 / (1 + rs)))
 
 
 def compute_rsi_score(price_series: pd.Series, volume_score: int = 0) -> Tuple[float, str]:
