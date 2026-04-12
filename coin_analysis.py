@@ -2,18 +2,15 @@
 # -*- coding: utf-8 -*-
 
 import os
-import math
-import re
 import logging
-from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Mapping, Optional, Tuple, Union
 import pandas as pd
-from fuzzywuzzy import fuzz, process
+from fuzzywuzzy import fuzz
 
-from config import (  # Importing relevant constants from the config file
+from config import (
     HIGH_VOLATILITY_THRESHOLD, MEDIUM_VOLATILITY_THRESHOLD,
-    MAX_POSSIBLE_SCORE, surge_words, FEAR_GREED_THRESHOLD,
+    MAX_POSSIBLE_SCORE, FEAR_GREED_THRESHOLD,
     LOW_VOLUME_THRESHOLD_LARGE, LOW_VOLUME_THRESHOLD_MID, LOW_VOLUME_THRESHOLD_SMALL, analyzer
 )
 
@@ -21,11 +18,9 @@ from config import (  # Importing relevant constants from the config file
 from api_clients import (
     call_with_retries,
     fetch_historical_ticker_data,
-    fetch_santiment_data_for_coin,
-    fetch_twitter_data,
     fetch_fear_and_greed_index,
-    fetch_coin_events as fetch_coin_events_api,  # imported, used by wrapper below
 )
+from features import extract_ticker_features
 
 def calculate_price_change(price_data: pd.Series, period: str = "short", span: int = 7) -> Union[float, None]:
     """
@@ -39,6 +34,10 @@ def calculate_price_change(price_data: pd.Series, period: str = "short", span: i
         period_data = smoothed_data.tail(30)
     else:
         period_data = smoothed_data.tail(90)
+
+    if period_data.empty:
+        logger.warning(f"No price data for period '{period}' after smoothing.")
+        return None
 
     start_price = period_data.iloc[0]
     end_price = period_data.iloc[-1]
@@ -65,6 +64,10 @@ def calculate_volume_change(volume_data: pd.Series, period: str = "short", span:
     else:
         period_data = smoothed_data.tail(90)
 
+    if period_data.empty:
+        logger.warning(f"No volume data for period '{period}' after smoothing.")
+        return None
+
     start_volume = period_data.iloc[0]
     end_volume = period_data.iloc[-1]
 
@@ -78,57 +81,13 @@ def calculate_volume_change(volume_data: pd.Series, period: str = "short", span:
 
 
 # ============================
-# Logging (console + single rolling file per script)
+# Logging
 # ============================
 
-def setup_logging(name: str,
-                  log_dir: Union[str, Path] = None,
-                  level: str = None) -> logging.Logger:
-    """
-    Create a logger that writes to console and a single per-script logfile.
-    - File path: <log_dir>/<script_stem>.log (overwrites each run)
-    - UTC timestamps, ISO-like format
-    """
-    base_dir = Path(__file__).resolve().parent
-    log_dir = Path(log_dir or (base_dir / "../logs")).resolve()
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    # Overwrite same file each run (rolling single file per script)
-    log_path = log_dir / f"{Path(__file__).stem}.log"
-
-    # Level from arg or env
-    level_name = (level or os.getenv("LOG_LEVEL", "INFO")).upper()
-    level_val = getattr(logging, level_name, logging.INFO)
-
-    logger = logging.getLogger(name)
-    logger.setLevel(level_val)
-    logger.propagate = False
-
-    # Clear existing handlers (avoid dupes on re-imports)
-    for h in list(logger.handlers):
-        logger.removeHandler(h)
-
-    fmt = "%(asctime)sZ [%(levelname)s] %(name)s | %(message)s"
-    datefmt = "%Y-%m-%dT%H:%M:%S"
-    formatter = logging.Formatter(fmt=fmt, datefmt=datefmt)
-
-    # Console handler
-    ch = logging.StreamHandler()
-    ch.setLevel(level_val)
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
-
-    # File handler (overwrite each run)
-    fh = logging.FileHandler(str(log_path), mode="w", encoding="utf-8", delay=False)
-    fh.setLevel(level_val)
-    fh.setFormatter(formatter)
-    logger.addHandler(fh)
-
-    logger.info(f"Logging started → {log_path} (level={level_name})")
-    return logger
+from logging_config import setup_logging
 
 # Instantiate module logger
-logger = setup_logging(__name__)
+logger = setup_logging(__name__, caller_file=__file__)
 
 # ----------------------------
 # Small time helper
@@ -137,6 +96,52 @@ logger = setup_logging(__name__)
 def utcnow() -> datetime:
     """UTC-aware 'now'."""
     return datetime.now(timezone.utc)
+
+# ----------------------------
+# RSI (Relative Strength Index)
+# ----------------------------
+
+def compute_rsi(price_series: pd.Series, period: int = 14) -> float:
+    """
+    Compute the Relative Strength Index (RSI) for a price series.
+    Returns RSI value 0-100, or 50.0 (neutral) if insufficient data.
+    """
+    if len(price_series) < period + 1:
+        return 50.0  # Neutral if insufficient data
+
+    delta = price_series.diff()
+    gain = delta.where(delta > 0, 0.0)
+    loss = (-delta).where(delta < 0, 0.0)
+
+    avg_gain = gain.rolling(window=period, min_periods=period).mean()
+    avg_loss = loss.rolling(window=period, min_periods=period).mean()
+
+    last_gain = avg_gain.iloc[-1]
+    last_loss = avg_loss.iloc[-1]
+
+    if pd.isna(last_gain) or pd.isna(last_loss):
+        return 50.0
+    if last_loss == 0:
+        return 100.0 if last_gain > 0 else 50.0
+
+    rs = last_gain / last_loss
+    return float(100 - (100 / (1 + rs)))
+
+
+def compute_rsi_score(price_series: pd.Series, volume_score: int = 0) -> Tuple[float, str]:
+    """
+    Score based on RSI: oversold (RSI < 30) or strong momentum (RSI > 70 with volume).
+    Returns (score 0-1, explanation).
+    """
+    rsi = compute_rsi(price_series)
+
+    if rsi < 30:
+        return 1.0, f"RSI={rsi:.0f} (oversold, potential bounce)"
+    elif rsi > 70 and volume_score >= 2:
+        return 1.0, f"RSI={rsi:.0f} (strong momentum with volume confirmation)"
+    else:
+        return 0.0, f"RSI={rsi:.0f} (neutral)"
+
 
 # ----------------------------
 # ANALYSIS FUNCTIONS
@@ -225,23 +230,6 @@ def get_fuzzy_trending_score(coin_id: str, coin_name: str, trending_coins_scores
 
 # ---------- Compatibility wrapper (keeps your original function name) ----------
 
-def fetch_coin_events(coin_id: str) -> List[Mapping[str, object]]:
-    """
-    Wrapper around api_clients.fetch_coin_events, kept for backward compatibility.
-    Returns events already filtered to the past 7 days (UTC).
-    """
-    try:
-        logger.debug(f"Fetching Event data for {coin_id}.")
-        events = fetch_coin_events_api(coin_id)
-        if not events:
-            logger.debug(f"No events found for {coin_id}.")
-            return []
-        logger.debug(f"Events found for {coin_id}: {len(events)} recent events")
-        return events
-    except Exception as e:
-        logger.debug(f"Error fetching events for {coin_id}: {e}")
-        return []
-
 
 def has_consistent_monthly_growth(historical_df: pd.DataFrame) -> bool:
     """
@@ -254,71 +242,202 @@ def has_consistent_monthly_growth(historical_df: pd.DataFrame) -> bool:
     return rising_days >= 18
 
 
-def compute_santiment_surge_metrics(santiment_data: Mapping[str, float]) -> Tuple[int, str]:
-    """
-    Computes surge-related scores from selected Santiment metrics.
 
-    Returns:
-        (score, explanation)
+def fetch_google_news_for_coin(coin_name: str, max_articles: int = 20) -> list:
     """
-    thresholds = {
-        'exchange_flow_delta': 1_000_000,  # USD
-        'active_addresses_increase': 10,   # %
-        'dev_activity_increase': 10,       # %
-        'whale_tx_count': 5,               # count
-        'volume_change': 10,               # %
-        'sentiment_score': 0.2,            # absolute compound
+    Fetch recent news for a coin via Google News RSS. Completely free, no API key.
+    Returns list of dicts with 'title' and 'description' keys for VADER analysis.
+    """
+    import feedparser
+    import urllib.request
+    import urllib.parse
+    try:
+        query = urllib.parse.quote(f"{coin_name} cryptocurrency")
+        url = f"https://news.google.com/rss/search?q={query}&hl=en"
+        req = urllib.request.Request(url, headers={"User-Agent": "CryptoPanda/3.0"})
+        resp = urllib.request.urlopen(req, timeout=10)
+        feed = feedparser.parse(resp.read())
+        articles = []
+        for entry in feed.entries[:max_articles]:
+            title = entry.get("title", "")
+            articles.append({
+                "title": title,
+                "description": title,  # Google News RSS title contains the headline
+            })
+        return articles
+    except Exception as e:
+        logger.debug(f"Google News fetch failed for {coin_name}: {e}")
+        return []
+
+
+def _llm_analyze_news(coin_name: str, headlines: list) -> dict:
+    """
+    Use LLM to analyse news headlines with crypto-specific understanding.
+    Returns dict with sentiment, catalysts, and summary.
+    Falls back to VADER if LLM unavailable.
+    """
+    try:
+        from report_generation import llm_chat_completion
+        import json as _json
+
+        headlines_text = "\n".join(f"- {h}" for h in headlines[:15])
+        prompt = f"""Analyse these recent news headlines about the cryptocurrency "{coin_name}".
+
+Headlines:
+{headlines_text}
+
+Return ONLY valid JSON with these fields:
+{{
+  "sentiment": <float from -1.0 (very bearish) to +1.0 (very bullish)>,
+  "summary": "<one sentence summarising the news tone>",
+  "catalysts": [<list of catalyst types detected, from: "exchange_listing", "partnership", "regulatory_negative", "regulatory_positive", "hack_exploit", "whale_accumulation", "technical_upgrade", "token_unlock", "lawsuit", "adoption", "none">],
+  "key_risk": "<one sentence on the main risk from the news, or 'none identified'>",
+  "confidence": <float 0-1, how confident you are in the sentiment reading>
+}}
+
+Rules:
+- "moon", "surge", "breakout", "bullish" = positive sentiment
+- "rug pull", "hack", "SEC", "lawsuit", "ban" = negative sentiment
+- "exchange listing", "Binance listing", "Coinbase listing" = exchange_listing catalyst (strongly bullish for small caps)
+- Be skeptical of hype — promotional headlines are less reliable than news from Reuters, Bloomberg, CoinDesk
+- If headlines are mixed, sentiment should be near 0
+- Return ONLY the JSON, nothing else"""
+
+        content = llm_chat_completion(prompt, temperature=0.1)
+
+        # Parse JSON from response
+        import re
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        if json_match:
+            return _json.loads(json_match.group(0))
+    except Exception as e:
+        logger.debug(f"LLM news analysis failed for {coin_name}: {e}")
+
+    return None
+
+
+def apply_news_confirmation(result: dict, coin_name: str) -> dict:
+    """
+    Stage 2: Fetch news via Google News RSS (free) and analyse using LLM
+    for crypto-aware sentiment, catalyst detection, and risk identification.
+
+    Called ONLY for shortlisted coins (top ~20), not all 200+.
+    Falls back to VADER if LLM is unavailable.
+
+    News adjusts weighted score:
+      - Base adjustment: sentiment * 2.0 (range ±2.0)
+      - Catalyst bonus: exchange_listing +1.0, hack_exploit -2.0, etc.
+      - Confidence-scaled: adjustment * confidence
+
+    Also tracks news velocity (article count as proxy for attention).
+    """
+    articles = fetch_google_news_for_coin(coin_name)
+
+    if not articles:
+        result["sentiment_score"] = 0
+        result["raw_sentiment"] = 0
+        result["news_flag"] = "NO_DATA"
+        result["news_adjustment"] = 0
+        result["news_headlines"] = []
+        result["news_article_count"] = 0
+        result["news_catalysts"] = []
+        result["news_summary"] = ""
+        result["news_key_risk"] = ""
+        result["news_velocity"] = "low"
+        return result
+
+    headlines = [a["title"] for a in articles]
+    article_count = len(articles)
+
+    # News velocity: how much attention is this coin getting?
+    if article_count >= 15:
+        velocity = "high"
+        velocity_bonus = 0.5
+    elif article_count >= 8:
+        velocity = "medium"
+        velocity_bonus = 0.2
+    else:
+        velocity = "low"
+        velocity_bonus = 0.0
+
+    # Try LLM analysis first (crypto-aware), fall back to VADER
+    llm_result = _llm_analyze_news(coin_name, headlines)
+
+    if llm_result and "sentiment" in llm_result:
+        raw_sentiment = float(llm_result.get("sentiment", 0))
+        confidence = float(llm_result.get("confidence", 0.5))
+        catalysts = llm_result.get("catalysts", [])
+        summary = llm_result.get("summary", "")
+        key_risk = llm_result.get("key_risk", "")
+        analysis_method = "llm"
+    else:
+        # Fallback to VADER
+        raw_sentiment = compute_sentiment_for_coin(coin_name, articles)
+        confidence = 0.5
+        catalysts = []
+        summary = ""
+        key_risk = ""
+        analysis_method = "vader"
+
+    sentiment_score = min(1.0, max(0.0, (raw_sentiment + 1.0) / 2.0))
+
+    # Calculate news adjustment
+    # Base: sentiment * 2.0, scaled by confidence
+    base_adjustment = raw_sentiment * 2.0 * confidence
+
+    # Catalyst adjustments
+    catalyst_weights = {
+        "exchange_listing": +1.5,
+        "partnership": +0.5,
+        "adoption": +0.5,
+        "technical_upgrade": +0.5,
+        "regulatory_positive": +0.5,
+        "whale_accumulation": +0.3,
+        "regulatory_negative": -1.0,
+        "hack_exploit": -2.0,
+        "lawsuit": -1.5,
+        "token_unlock": -0.5,
     }
+    catalyst_adjustment = sum(catalyst_weights.get(c, 0) for c in catalysts)
 
-    exchange_inflow = float(santiment_data.get("exchange_inflow_usd", 0) or 0)
-    exchange_outflow = float(santiment_data.get("exchange_outflow_usd", 0) or 0)
-    dev_activity = float(santiment_data.get("dev_activity_increase", 0) or 0)
-    active_addresses_change = float(santiment_data.get("daily_active_addresses_increase", 0) or 0)
-    whale_tx_count = float(santiment_data.get("whale_transaction_count_100k_usd_to_inf", 0) or 0)
-    # FIX: use the correct key for 1d volume change
-    volume_change = float(santiment_data.get("transaction_volume_usd_change_1d", 0) or 0)
-    sentiment_weighted = float(santiment_data.get("sentiment_weighted_total", 0) or 0)
+    total_adjustment = round(base_adjustment + catalyst_adjustment + velocity_bonus, 2)
 
-    exchange_flow_delta = exchange_outflow - exchange_inflow  # Net outflow = bullish
+    if raw_sentiment > 0.3:
+        news_flag = "POSITIVE"
+    elif raw_sentiment < -0.3:
+        news_flag = "NEGATIVE"
+    else:
+        news_flag = "NEUTRAL"
 
-    score = 0
-    explanation: List[str] = []
+    # Store all news data
+    result["sentiment_score"] = round(sentiment_score, 3)
+    result["raw_sentiment"] = round(raw_sentiment, 3)
+    result["news_flag"] = news_flag
+    result["news_adjustment"] = total_adjustment
+    result["news_headlines"] = headlines[:3]
+    result["news_article_count"] = article_count
+    result["news_catalysts"] = catalysts
+    result["news_summary"] = summary
+    result["news_key_risk"] = key_risk
+    result["news_velocity"] = velocity
+    result["news_analysis_method"] = analysis_method
 
-    if exchange_flow_delta > thresholds['exchange_flow_delta']:
-        score += 1
-        explanation.append(f"🔁 Net exchange outflow of ${exchange_flow_delta:,.0f} signals accumulation")
+    # Adjust the weighted score
+    if "weighted_score" in result:
+        result["weighted_score"] = round(result["weighted_score"] + total_adjustment, 2)
+        weighted_max = result.get("_weighted_max", 16.5)
+        result["weighted_score_percentage"] = round(
+            (result["weighted_score"] / weighted_max) * 100, 2
+        ) if weighted_max else result.get("weighted_score_percentage", 0)
 
-    if active_addresses_change > thresholds['active_addresses_increase']:
-        score += 1
-        explanation.append(f"📈 Active addresses increased {active_addresses_change:.2f}%")
-
-    if dev_activity > thresholds['dev_activity_increase']:
-        score += 1
-        explanation.append(f"🛠️ Dev activity increase = {dev_activity:.2f}%")
-
-    if whale_tx_count > thresholds['whale_tx_count']:
-        score += 1
-        explanation.append(f"🐋 Whale tx count = {whale_tx_count:.0f}")
-
-    if volume_change > thresholds['volume_change']:
-        score += 1
-        explanation.append(f"💸 Tx volume surged {volume_change:.2f}%")
-
-    if sentiment_weighted > thresholds['sentiment_score']:
-        score += 1
-        explanation.append(f"🎯 Weighted sentiment = {sentiment_weighted:.2f} (positive)")
-
-    return score, (" | ".join(explanation) if explanation else "No Santiment surge signals detected.")
+    return result
 
 
 def analyze_coin(
     coin_id: str,
     coin_name: str,
     end_date: str,
-    news_df: pd.DataFrame,
-    digest_tickers: List[str],
-    trending_coins_scores: Mapping[str, float],
-    santiment_slugs_df: pd.DataFrame,
+    ticker_data: dict = None,
 ) -> Dict[str, object]:
     """
     Analyzes a given cryptocurrency and returns a dictionary with various analysis scores.
@@ -336,32 +455,30 @@ def analyze_coin(
     historical_df_medium_term = fetch_historical_ticker_data(coin_id, start_date_medium_term, end_date)
     historical_df_long_term = fetch_historical_ticker_data(coin_id, start_date_long_term, end_date)
 
-    # Match the coin with Santiment slugs
-    santiment_slug = match_coins_with_santiment(coin_name, santiment_slugs_df)
-
-    # Fetch Santiment data if slug available
-    if santiment_slug:
-        santiment_data = fetch_santiment_data_for_coin(santiment_slug)
-    else:
-        santiment_data = {
-            "dev_activity_increase": 0.0,
-            "daily_active_addresses_increase": 0.0,
-            "exchange_inflow_usd": 0.0,
-            "exchange_outflow_usd": 0.0,
-            "whale_transaction_count_100k_usd_to_inf": 0.0,
-            "transaction_volume_usd_change_1d": 0.0,
-            "sentiment_weighted_total": 0.0,
-        }
-
-    santiment_score, santiment_explanation = compute_santiment_score_with_thresholds(santiment_data)
-    santiment_surge_score, santiment_surge_explanation = compute_santiment_surge_metrics(santiment_data)
-
     if historical_df_long_term.empty or 'price' not in historical_df_long_term.columns:
         logger.debug(f"No valid price data available for {coin_id}.")
-        return {"coin_id": coin_id, "coin_name": coin_name, "explanation": f"No valid price data available for {coin_id}."}
-
-    twitter_df = fetch_twitter_data(coin_id)
-    tweet_score = 1 if not twitter_df.empty else 0
+        return {
+            "coin_id": coin_id,
+            "coin_name": coin_name,
+            "market_cap": 0,
+            "volume_24h": 0,
+            "price_change_score": 0,
+            "volume_change_score": 0,
+            "consistent_growth": "No",
+            "sustained_volume_growth": "No",
+            "fear_and_greed_index": None,
+            "volume_spike_score": 0,
+            "distance_ath_score": 0,
+            "mtf_momentum_score": 0,
+            "liquidity_risk": "High",
+            "rsi_score": 0,
+            "rsi_explanation": "No data",
+            "cumulative_score": 0,
+            "cumulative_score_percentage": 0.0,
+            "explanation": f"No valid price data available for {coin_id}.",
+            "coin_news": [],
+            "trend_conflict": "No",
+        }
 
     volatility = historical_df_long_term['price'].pct_change().std()
 
@@ -378,11 +495,13 @@ def analyze_coin(
     sustained_volume_growth_score = 1 if sustained_volume_growth else 0
 
     fear_and_greed_index = fetch_fear_and_greed_index()
-    fear_and_greed_score = 1 if fear_and_greed_index is not None and fear_and_greed_index > FEAR_GREED_THRESHOLD else 0
+    fear_and_greed_score = min(1.0, max(0.0, (fear_and_greed_index - 40) / 60.0)) if fear_and_greed_index is not None else 0
 
-    events = fetch_coin_events(coin_id)  # already 7d filtered
-    recent_events_count = len(events)
-    event_score = 1 if recent_events_count > 0 else 0
+    # CoinPaprika ticker features (real-time signals)
+    ticker_features = extract_ticker_features(ticker_data) if ticker_data else {}
+    volume_spike_score = ticker_features.get("volume_spike_24h_score", 0)
+    distance_ath_score = ticker_features.get("distance_from_ath_score", 0)
+    mtf_momentum_score = ticker_features.get("multi_timeframe_momentum_score", 0)
 
     consistent_monthly_growth = has_consistent_monthly_growth(historical_df_medium_term)
     consistent_monthly_growth_score = 1 if consistent_monthly_growth else 0
@@ -390,40 +509,59 @@ def analyze_coin(
     market_cap_class = classify_market_cap(most_recent_market_cap)
     liquidity_risk = classify_liquidity_risk(most_recent_volume_24h, market_cap_class)
 
-    # Integrate sentiment analysis & surge words
-    if not news_df.empty:
-        coin_news = news_df[news_df['coin'] == coin_name].copy()
-        sentiment_score = compute_sentiment_for_coin(coin_name, coin_news.to_dict('records'))
-        surge_score, surge_explanation_list = score_surge_words(coin_news, surge_words)
-        surge_explanation = "; ".join(surge_explanation_list) if surge_explanation_list else "—"
-    else:
-        coin_news = pd.DataFrame()
-        sentiment_score = 0
-        surge_score = 0
-        surge_explanation = "No significant surge-related news detected."
+    trend_conflict_score = 2 if (consistent_monthly_growth_score and not consistent_growth_score) else 0
 
-    # Digest presence (fuzzy)
-    digest_score = 1 if any(
-        fuzz.partial_ratio(str(t).lower(), coin_id.lower()) > 80
-        or fuzz.partial_ratio(str(t).lower(), coin_name.lower()) > 80
-        for t in (digest_tickers or [])
-    ) else 0
+    # RSI indicator
+    rsi_score, rsi_explanation = compute_rsi_score(historical_df_long_term['price'], volume_score)
 
-    # Trending
-    trending_score = get_fuzzy_trending_score(coin_id, coin_name, trending_coins_scores)
-
-    # Recompute santiment score note: already computed above; just reuse
-    trend_conflict_score = 1 if (consistent_monthly_growth_score and not consistent_growth_score) else 0
-
+    # Equal-weighted score (legacy, kept for comparison)
     cumulative_score = (
-        volume_score + tweet_score + consistent_growth_score + sustained_volume_growth_score +
-        fear_and_greed_score + event_score + price_change_score + sentiment_score + surge_score +
-        digest_score + trending_score + santiment_score + consistent_monthly_growth_score +
-        trend_conflict_score + santiment_surge_score
+        volume_score + consistent_growth_score + sustained_volume_growth_score +
+        fear_and_greed_score + price_change_score +
+        consistent_monthly_growth_score +
+        trend_conflict_score + rsi_score +
+        volume_spike_score + distance_ath_score + mtf_momentum_score
     )
 
     max_possible_score = MAX_POSSIBLE_SCORE
     cumulative_score_percentage = (cumulative_score / max_possible_score) * 100 if max_possible_score else 0.0
+
+    # Evidence-weighted score (derived from backtest signal correlations)
+    _SIGNAL_WEIGHTS = {
+        "rsi": 3.0,                       # Best 7d signal (+3.48% lift)
+        "consistent_monthly_growth": 3.0,  # Best 30d signal (+13.72% lift)
+        "volume_change": 2.0,             # Good 30d signal (+6.65% lift)
+        "trend_conflict": 1.5,            # Decent 30d signal (+3.96% lift)
+        "fear_and_greed": 1.0,            # Conceptually sound
+        "consistent_growth": 1.0,         # Marginal (+1.15% lift)
+        "sustained_volume_growth": 0.5,   # Mixed (-0.82%/+2.74% lift)
+        "price_change": -1.0,             # INVERTED: momentum chasing hurts 7d returns
+        # Ticker features
+        "volume_spike_24h": 2.0,          # Real-time volume surge detection
+        "distance_from_ath": 1.5,         # Recovery potential signal
+        "multi_timeframe_momentum": 1.0,  # Timeframe alignment
+    }
+    weighted_score = (
+        _SIGNAL_WEIGHTS["rsi"] * rsi_score +
+        _SIGNAL_WEIGHTS["consistent_monthly_growth"] * consistent_monthly_growth_score +
+        _SIGNAL_WEIGHTS["volume_change"] * (volume_score / 3.0) +
+        _SIGNAL_WEIGHTS["trend_conflict"] * (trend_conflict_score / 2.0) +
+        _SIGNAL_WEIGHTS["fear_and_greed"] * fear_and_greed_score +
+        _SIGNAL_WEIGHTS["consistent_growth"] * consistent_growth_score +
+        _SIGNAL_WEIGHTS["sustained_volume_growth"] * sustained_volume_growth_score +
+        _SIGNAL_WEIGHTS["price_change"] * (price_change_score / 3.0) +
+        _SIGNAL_WEIGHTS["volume_spike_24h"] * volume_spike_score +
+        _SIGNAL_WEIGHTS["distance_from_ath"] * distance_ath_score +
+        _SIGNAL_WEIGHTS["multi_timeframe_momentum"] * mtf_momentum_score
+    )
+    weighted_max = sum(abs(w) for w in _SIGNAL_WEIGHTS.values())
+    weighted_score_percentage = round((weighted_score / weighted_max) * 100, 2) if weighted_max else 0.0
+    _weighted_max = weighted_max  # stored for stage 2 news adjustment
+
+    # Exit strategy targets (volatility-scaled)
+    vol_daily = volatility if volatility and not pd.isna(volatility) else 0.03
+    take_profit_target = round(max(8.0, vol_daily * 100 * 7), 1)
+    stop_loss_target = round(max(3.0, vol_daily * 100 * 3), 1)
 
     # Build explanation
     explanation = (
@@ -431,33 +569,19 @@ def analyze_coin(
         f"Liquidity Risk: {liquidity_risk}, "
         f"Price Change Score: {'Significant' if price_change_score else 'No significant change'} ({price_change_explanation}), "
         f"Volume Change Score: {'Significant' if volume_score else 'No significant change'} ({volume_explanation}), "
-        f"Tweets: {'Yes' if tweet_score else 'None'}, "
         f"Consistent Price Growth: {'Yes' if consistent_growth_score else 'No'}, "
         f"Sustained Volume Growth: {'Yes' if sustained_volume_growth_score else 'No'}, "
         f"Fear and Greed Index: {fear_and_greed_index if isinstance(fear_and_greed_index, int) else 'N/A'}, "
-        f"Recent Events: {recent_events_count}, "
-        f"Sentiment Score: {sentiment_score}, "
-        f"Surge Keywords Score: {surge_score} ({surge_explanation}), "
-        f"Santiment Score: {santiment_score} ({santiment_explanation}), "
-        f"News Digest Score: {digest_score}, "
-        f"Trending Score: {trending_score}, "
+        f"Volume Spike: {ticker_features.get('volume_spike_expl', 'N/A')}, "
+        f"ATH Distance: {ticker_features.get('distance_ath_expl', 'N/A')}, "
+        f"Multi-TF Momentum: {ticker_features.get('mtf_expl', 'N/A')}, "
         f"Market Cap: {most_recent_market_cap}, "
         f"Volume (24h): {most_recent_volume_24h}, "
         f"Cumulative Surge Score: {cumulative_score} ({cumulative_score_percentage:.2f}%), "
         f"Consistent Monthly Growth: {'Yes' if consistent_monthly_growth_score else 'No'}, "
         f"Trend Conflict: {'Yes' if trend_conflict_score else 'No'} (Monthly growth without short-term support), "
-        f"| Santiment Surge Score: {santiment_surge_score} ({santiment_surge_explanation})"
+        f"RSI: {rsi_explanation}"
     )
-
-    # Add top 3 news headlines
-    if not coin_news.empty:
-        news_headlines = coin_news['title'].dropna().astype(str).tolist()[:3]
-        if news_headlines:
-            explanation += f"; Top News: " + "; ".join(news_headlines)
-        else:
-            explanation += "; Top News: None"
-    else:
-        explanation += "; Top News: No recent news found."
 
     return {
         "coin_id": coin_id,
@@ -466,61 +590,33 @@ def analyze_coin(
         "volume_24h": most_recent_volume_24h,
         "price_change_score": int(price_change_score),
         "volume_change_score": int(volume_score),
-        "tweets": len(twitter_df) if tweet_score else 0,
         "consistent_growth": "Yes" if consistent_growth_score else "No",
         "sustained_volume_growth": "Yes" if sustained_volume_growth_score else "No",
         "fear_and_greed_index": int(fear_and_greed_index) if fear_and_greed_index is not None else None,
-        "events": recent_events_count,
-        "sentiment_score": sentiment_score,
-        "surging_keywords_score": surge_score,
-        "news_digest_score": digest_score,
-        "trending_score": float(trending_score),
+        "volume_spike_score": volume_spike_score,
+        "distance_ath_score": distance_ath_score,
+        "mtf_momentum_score": mtf_momentum_score,
+        "volume_spike_expl": ticker_features.get("volume_spike_expl", ""),
+        "distance_ath_expl": ticker_features.get("distance_ath_expl", ""),
+        "mtf_expl": ticker_features.get("mtf_expl", ""),
+        "percent_from_ath": ticker_features.get("percent_from_ath"),
         "liquidity_risk": liquidity_risk,
-        "santiment_score": santiment_score,
-        "santiment_surge_score": santiment_surge_score,
-        "santiment_surge_explanation": santiment_surge_explanation,
+        "rsi_score": rsi_score,
+        "rsi_explanation": rsi_explanation,
         "cumulative_score": cumulative_score,
         "cumulative_score_percentage": round(cumulative_score_percentage, 2),
+        "weighted_score": round(weighted_score, 2),
+        "weighted_score_percentage": weighted_score_percentage,
+        "_weighted_max": _weighted_max,
+        "take_profit_target_pct": take_profit_target,
+        "stop_loss_target_pct": stop_loss_target,
         "explanation": explanation,
-        "coin_news": coin_news.to_dict('records') if not coin_news.empty else [],
         "trend_conflict": "Yes" if trend_conflict_score else "No",
     }
 
 # ----------------------------
 # MATCHING & THRESHOLDS
 # ----------------------------
-
-def match_coins_with_santiment(coin_name: str, santiment_slugs_df: pd.DataFrame, threshold: int = 90) -> Optional[str]:
-    """
-    Matches a given coin name with the Santiment slugs dataframe using exact then fuzzy match.
-    """
-    if 'name_normalized' not in santiment_slugs_df.columns:
-        logger.warning("'name_normalized' column not found in the Santiment slugs dataframe.")
-        return None
-
-    coin_name_normalized = re.sub(r'\W+', '', str(coin_name).lower())
-
-    # Exact match
-    match = santiment_slugs_df[santiment_slugs_df['name_normalized'] == coin_name_normalized]
-    if not match.empty:
-        return str(match['slug'].values[0])
-
-    # Fuzzy match fallback
-    choices = santiment_slugs_df['name_normalized'].dropna().astype(str).tolist()
-    if not choices:
-        logger.info(f"No choices to fuzzy match for {coin_name}")
-        return None
-
-    best_match, score = process.extractOne(coin_name_normalized, choices)
-    if score >= threshold:
-        matched_row = santiment_slugs_df[santiment_slugs_df['name_normalized'] == best_match]
-        if not matched_row.empty:
-            return str(matched_row['slug'].values[0])
-        else:
-            logger.warning(f"Fuzzy matched name '{best_match}' not found in DataFrame.")
-
-    logger.info(f"No suitable match found for {coin_name} (normalized: {coin_name_normalized})")
-    return None
 
 
 def get_price_change_thresholds(market_cap_class: str, volatility_class: str) -> Tuple[float, float, float]:
@@ -607,37 +703,6 @@ def get_volume_thresholds(market_cap_class: str, volatility_class: str) -> Tuple
     return thresholds.get((market_cap_class, volatility_class), (2, 4, 1.5, 3, 1.2, 2))
 
 
-def score_surge_words(news_df: pd.DataFrame, surge_words: List[str]) -> Tuple[int, List[str]]:
-    """
-    Fuzzy-score surge words across news; returns (ceil(avg), explanation list).
-    """
-    total_surge_score = 0.0
-    news_count = 0
-    explanation: List[str] = []
-
-    if not news_df.empty:
-        for _, news_item in news_df.iterrows():
-            description = news_item.get('description', '')
-
-            if isinstance(description, str) and description.strip():
-                surge_score = 0.0
-                article_explanation = []
-
-                for word in surge_words:
-                    match_score = fuzz.partial_ratio(word.lower(), description.lower())
-                    if match_score > 75:
-                        surge_score += match_score / 100.0
-                        article_explanation.append(f"Matched word '{word}' with score {match_score}%")
-
-                if surge_score > 0:
-                    explanation.append(f"Article: '{news_item.get('title', '')}' → {', '.join(article_explanation)}")
-
-                total_surge_score += surge_score
-                news_count += 1
-
-    average_surge_score = (total_surge_score / news_count) if news_count else 0.0
-    return int(math.ceil(average_surge_score)), explanation
-
 
 def classify_volatility(volatility: float) -> str:
     """
@@ -663,12 +728,12 @@ def classify_market_cap(market_cap: int) -> str:
         return "Small"
 
 
-def compute_sentiment_for_coin(coin_name: str, news_data: List[Mapping[str, str]]) -> int:
+def compute_sentiment_for_coin(coin_name: str, news_data: List[Mapping[str, str]]) -> float:
     """
-    Computes the sentiment score for a given coin based on its news data.
+    Computes the average compound sentiment for a given coin based on its news data.
 
     Returns:
-        1 if avg compound > 0.5 else 0.
+        Average VADER compound sentiment (-1.0 to 1.0), or 0.0 if no data.
     """
     sentiments: List[float] = []
     for news_item in news_data:
@@ -677,42 +742,6 @@ def compute_sentiment_for_coin(coin_name: str, news_data: List[Mapping[str, str]
             sentiment_score = float(analyzer.polarity_scores(description)['compound'])
             sentiments.append(sentiment_score)
 
-    average_sentiment = (sum(sentiments) / len(sentiments)) if sentiments else 0.0
-    return 1 if average_sentiment > 0.5 else 0
+    return (sum(sentiments) / len(sentiments)) if sentiments else 0.0
 
 
-def compute_santiment_score_with_thresholds(santiment_data: Mapping[str, float]) -> Tuple[int, str]:
-    """
-    Binary scoring using Santiment data with thresholds for each metric.
-
-    Returns:
-        (score, explanation)
-    """
-    thresholds = {
-        'dev_activity': 10.0,             # %
-        'daily_active_addresses': 5.0,    # %
-    }
-
-    dev_activity = float(santiment_data.get('dev_activity_increase', 0) or 0)
-    daily_active_addresses = float(santiment_data.get('daily_active_addresses_increase', 0) or 0)
-
-    explanations: List[str] = []
-
-    if dev_activity > thresholds['dev_activity']:
-        dev_activity_score = 1
-        explanations.append(f"Development activity increase is significant: {dev_activity:.2f}% (>{thresholds['dev_activity']}%)")
-    else:
-        dev_activity_score = 0
-        explanations.append(f"Development activity increase is low: {dev_activity:.2f}% (≤{thresholds['dev_activity']}%)")
-
-    if daily_active_addresses > thresholds['daily_active_addresses']:
-        daily_active_addresses_score = 1
-        explanations.append(f"Daily active addresses show growth: {daily_active_addresses:.2f}% (>{thresholds['daily_active_addresses']}%)")
-    else:
-        daily_active_addresses_score = 0
-        explanations.append(f"Daily active addresses growth is weak: {daily_active_addresses:.2f}% (≤{thresholds['daily_active_addresses']}%)")
-
-    total_santiment_score = dev_activity_score + daily_active_addresses_score
-    explanation = " | ".join(explanations)
-
-    return total_santiment_score, explanation

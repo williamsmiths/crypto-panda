@@ -1,0 +1,49 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#264653', 'primaryTextColor': '#fff', 'primaryBorderColor': '#264653', 'lineColor': '#2a9d8f', 'secondaryColor': '#e76f51', 'tertiaryColor': '#f4a261', 'fontSize': '14px'}}}%%
+
+flowchart TD
+    subgraph STAGE1["STAGE 1: QUANTITATIVE SCORING (all 200+ coins)"]
+        direction TB
+        CP[("🔌 CoinPaprika\n(Pro $99/mo)")] --> |"Bulk tickers\n(1 API call)"| TF["📊 Ticker Features\n• Volume Spike 24h\n• Distance from ATH\n• Multi-TF Momentum"]
+        CP --> |"Historical OHLCV\n(~200 calls)"| QS["📈 Price/Volume Signals\n• Price Change (0-3)\n• Volume Change (0-3)\n• Weekly Growth (0-1)\n• Monthly Growth (0-1)\n• Sustained Volume (0-1)\n• Trend Conflict (0-2)\n• RSI (0-1)"]
+        FG[("🌡️ Alternative.me\n(free)")] --> |"1 call"| MK["😱 Fear & Greed\n(0-1)"]
+
+        QS --> WS["⚖️ Evidence-Weighted\nScoring Engine\n(per-universe weights)"]
+        TF --> WS
+        MK --> WS
+
+        WS --> |"Ranked by\nweighted score"| FILTER["🔍 Filter\n• RSI < 70\n• 7d < +50%\n• Score > threshold\n• Has growth or volume signal"]
+        FILTER --> |"Top ~20 coins"| S2
+    end
+
+    subgraph STAGE2["STAGE 2: LLM NEWS ANALYSIS (~20 coins, ~$0.20)"]
+        direction TB
+        S2["📰 Google News RSS\n(free, no API key)"] --> |"20 headlines\nper coin"| LLM["🤖 LLM Analysis\n(OpenAI / Claude / Ollama)"]
+        LLM --> SENT["Sentiment (-1 to +1)\ncrypto-aware"]
+        LLM --> CAT["Catalyst Detection\n• Exchange listing (+1.5)\n• Partnership (+0.5)\n• Hack/exploit (-2.0)\n• Lawsuit (-1.5)\n• Regulatory (-1.0)"]
+        LLM --> RISK["Key Risk\nIdentification"]
+        S2 --> VEL["📈 News Velocity\n15+ articles = high\n8+ = medium"]
+
+        SENT --> ADJ["Score Adjustment\n(sentiment × 2 × confidence)\n+ catalyst bonus\n+ velocity bonus"]
+        CAT --> ADJ
+        VEL --> ADJ
+        ADJ --> |"±4.0 max"| DB[("💾 Aurora PostgreSQL\n(news history)")]
+    end
+
+    subgraph STAGE3["STAGE 3: REPORTING"]
+        direction TB
+        ADJ --> COMM["🤖 LLM Commentary\nPer-coin analysis\n(~1 API call)"]
+        REG["📊 Market Regime\nBTC 50/200 MA\n(bull/bear/sideways)"] --> EMAIL
+        COMM --> EMAIL["📧 Daily Alert Email\n• Market conditions\n• AI commentary\n• Multi-universe tables\n• Exit targets (TP/SL)\n• Full glossary"]
+        EMAIL --> |"Brevo SMTP\n(free)"| INBOX["📬 Your Inbox"]
+    end
+
+    subgraph BACKTEST["BACKTESTER (ad-hoc)"]
+        direction LR
+        CP2[("CoinPaprika\nPro")] --> |"5yr history"| BT["backtester.py\n• Walk-forward validation\n• Vol-adjusted surges\n• Exit strategy sim\n• Per-universe analysis"]
+        BT --> |"Signal weights"| WS
+    end
+
+    style STAGE1 fill:#264653,color:#fff,stroke:#264653
+    style STAGE2 fill:#2a9d8f,color:#fff,stroke:#2a9d8f
+    style STAGE3 fill:#e76f51,color:#fff,stroke:#e76f51
+    style BACKTEST fill:#f4a261,color:#000,stroke:#f4a261

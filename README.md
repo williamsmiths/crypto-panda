@@ -1,209 +1,272 @@
 
-# 🐼 Crypto-Panda: Cryptocurrency Analysis & Reporting Tool
+# Crypto-Panda: Automated Crypto Market Scanner & Alert System
 
 [![GitHub Repo](https://img.shields.io/badge/GitHub-sjmoran%2Fcrypto--panda-blue?logo=github)](https://github.com/sjmoran/crypto-panda)
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC--BY--NC%204.0-orange)](https://creativecommons.org/licenses/by-nc/4.0/)
-[![Stars](https://img.shields.io/github/stars/sjmoran/crypto-panda?style=social)](https://github.com/sjmoran/crypto-panda/stargazers)
-[![Issues](https://img.shields.io/github/issues/sjmoran/crypto-panda)](https://github.com/sjmoran/crypto-panda/issues)
 [![Python Version](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
+[![Tests](https://img.shields.io/badge/Tests-22%20passing-brightgreen)]()
 
 <img src="./images/crypto_panda_trading.png" alt="Crypto Panda Trading" width="50%"/>
 
 ---
 
-## 🔍 What is Crypto-Panda?
+## What is Crypto-Panda?
 
-**Crypto-Panda** is a smart, automated reporting tool that tracks the cryptocurrency market, analyzes patterns using both quantitative signals and AI, and emails you a  report on the coins worth watching. It's fast, scanning thousands of coins and producing a detailed report within day.
+An open-source crypto market scanner that scores coins using backtested quantitative signals, applies LLM-powered news analysis on shortlisted coins, and emails you a daily report with AI commentary, exit targets, and catalyst alerts.
 
-Powered by Python, OpenAI's GPT-4o, Santiment, and CoinPaprika APIs — it's designed to help you cut through the noise and make sense of the chaos.
-
----
-
-## 🧠 What It Can Do
-
-- 📈 **Market Trend Analysis**  
-  Pulls historical price/volume data via CoinPaprika and analyzes short- and long-term trends.
-
-- 🧪 **Santiment Intelligence**  
-  Tracks developer activity, daily active addresses, and other on-chain signals.
-
-- 📰 **News & Social Sentiment**  
-  Uses VADER and GPT-4o to extract sentiment from headlines and social chatter.
-
-- 🚀 **Surge Detection**  
-  Uses a composite scoring mechanism to flag coins with breakout potential.
-
-- 🤖 **GPT-4o Investment Suggestions**  
-  Generates natural-language investment suggestions from raw data.
-
-- 📬 **Weekly HTML Report by Email**  
-  Fully automated and ready for inboxes.
-
-- 🔁 **Reliable API Access**  
-  Includes built-in retry handling for flaky requests.
+Built with a two-stage architecture that keeps costs low (~$100/mo) by running expensive operations only on pre-qualified coins.
 
 ---
 
-## 📊 Full Metric Reference Table
+## Features
 
-This table outlines all the metrics analyzed for each cryptocurrency, grouped by theme and annotated with their range, usage, and description.
-
-
-| **Category**        | **Metric**                            | **Key**                                   | **Range / Type**       | **Description** |
-|---------------------|----------------------------------------|--------------------------------------------|-------------------------|-----------------|
-| 📈 Price            | Price Change Score                     | `price_change_score`                       | 0–3                    | Momentum over short, medium, and long-term windows |
-| 📈 Price            | Consistent Weekly Growth               | `consistent_growth_score`                  | 0–1                    | ≥ 4 up-days in last 7 |
-| 📈 Price            | Consistent Monthly Growth              | `consistent_monthly_growth`                | 0–1                    | ≥ 18 up-days in last 30 |
-| 📈 Price            | Trend Conflict                         | `trend_conflict_score`                     | 0–1                    | Monthly uptrend without short-term support |
-| 📊 Volume           | Volume Change Score                    | `volume_change_score`                      | 0–3                    | Surges over 3 timeframes based on market cap/volatility |
-| 📊 Volume           | Sustained Volume Growth                | `sustained_volume_growth`                  | 0–1                    | ≥ 4 volume-up days in last 7 |
-| 📉 Liquidity        | Liquidity Risk                         | `liquidity_risk`                           | Low/Medium/High        | Based on 24h volume vs market cap tier |
-| 💬 Sentiment        | Tweet Score                            | `tweet_score`                              | 0–1                    | Tweets found via CoinPaprika |
-| 💬 Sentiment        | News Sentiment Score                   | `sentiment_score`                          | 0–1                    | VADER sentiment of news (compound > 0.5 = 1) |
-| 💬 Sentiment        | Surge Keywords Score                   | `surging_keywords_score`                   | 0–1                    | Detects bullish phrases in recent news |
-| 💬 Sentiment        | Fear & Greed Score                     | `fear_and_greed_score`                     | 0–1                    | Based on Alt.me index crossing threshold |
-| 📰 News/Events       | Digest Mention                         | `digest_score`                             | 0–1                    | If coin is in curated Crypto Digest |
-| 📰 News/Events       | Trending Score                         | `trending_score`                           | 0–2                    | Trending mentions from CryptoNewsAPI |
-| 📰 News/Events       | Event Score                            | `event_score`                              | 0–1                    | Coin has events in last 7 days |
-| 🧠 Santiment         | Dev Activity Increase                  | `dev_activity_increase`                    | % (0–∞)                | 30d % change in developer activity |
-| 🧠 Santiment         | Active Addresses Increase              | `daily_active_addresses_increase`          | % (0–∞)                | 30d % change in unique addresses |
-| 🧠 Santiment         | Exchange Inflow (USD, 1d)              | `exchange_inflow_usd`                      | USD                    | Token flow into exchanges (bearish) |
-| 🧠 Santiment         | Exchange Outflow (USD, 1d)             | `exchange_outflow_usd`                     | USD                    | Token flow out of exchanges (bullish) |
-| 🧠 Santiment         | Whale Transaction Count (>$100k)       | `whale_transaction_count_100k_usd_to_inf`  | Count                  | Whale trades in last 24h |
-| 🧠 Santiment         | Tx Volume Change (1d)                  | `transaction_volume_usd_change_1d`         | %                      | Change in USD volume day-over-day |
-| 🧠 Santiment         | Weighted Sentiment (1d)                | `sentiment_weighted_total`                 | Score (-1 to +1)       | Weighted community + market sentiment |
-| 🧠 Santiment         | Santiment Score                        | `santiment_score`                          | 0–2                    | Binary from dev + address increase |
-| 🧠 Santiment         | Santiment Surge Score                  | `santiment_surge_score`                    | 0–6                    | Composite of 6 Santiment surge metrics |
-| 🧠 Santiment         | Santiment Surge Explanation            | `santiment_surge_explanation`              | Text                   | Explains triggers for surge score |
-| ✅ Final             | Cumulative Score                       | `cumulative_score`                         | 0–22                   | Sum of all metrics |
-| ✅ Final             | Cumulative Score %                     | `cumulative_score_percentage`              | 0–100%                | Normalized version of final score |
-| 🧾 Bonus             | News Headlines                         | `coin_news`                                | List of dicts         | Top 3 recent headlines for the coin |
-| 🧾 Bonus             | Full Explanation                       | `explanation`                              | String                 | Human-readable summary of metrics |
-
-## 📬 Example Report
-
-Each weekly email includes top-ranked coins and GPT-generated insights:
-
-<img src="./images/example_report.png" alt="AI Generated Crypto Coin Report" width="50%"/>
+| Feature | Description |
+|---|---|
+| **Two-Stage Scoring** | Stage 1: quantitative signals on all coins (free). Stage 2: LLM news analysis on shortlist only (~$0.20/run) |
+| **Multi-Universe** | Separate analysis and weights for large-cap (1-50), mid-cap (51-200), and small-cap (201-1000) |
+| **Evidence-Weighted** | Signal weights derived from 5,600+ backtesting observations, not guesswork |
+| **LLM News Analytics** | Crypto-aware sentiment, catalyst detection (exchange listings, hacks, lawsuits), risk identification |
+| **News Velocity** | Detects when a coin is getting unusual attention (article count as proxy) |
+| **Exit Targets** | Per-coin take-profit and trailing stop-loss, volatility-scaled |
+| **Market Regime** | Bull/bear/sideways detection via BTC 50/200 MA crossover |
+| **AI Commentary** | LLM generates per-coin analysis (OpenAI, Anthropic, Ollama, or any compatible endpoint) |
+| **Backtester** | 4+ years of validation data with volatility-adjusted surge detection and exit strategy simulation |
+| **News Persistence** | Daily news sentiment saved to Aurora PostgreSQL for future backtesting |
 
 ---
 
-## ⚙️ Requirements
-
-- Python 3.8+
-- Install dependencies via:
-
-```bash
-pip install -r requirements.txt
-```
-
----
-
-## 🔐 Environment Variables
-
-Create a `.env` file with the following:
-
-```env
-COIN_PAPRIKA_API_KEY=
-OPENAI_API_KEY=
-CRYPTO_NEWS_API_KEY=
-SAN_API_KEY=
-EMAIL_FROM=
-EMAIL_TO=
-SMTP_SERVER=
-SMTP_USERNAME=
-SMTP_PASSWORD=
-```
-
----
-
-## 🚀 Quickstart
+## Quickstart
 
 ```bash
 git clone https://github.com/sjmoran/crypto-panda.git
 cd crypto-panda
 pip install -r requirements.txt
+cp .env.example .env   # Fill in API keys
+
+# Daily scan — all cap sizes
+python daily_scanner.py --universe all --top-coins 200 --min-weighted-score 35
+
+# Weekly full report
 python monitor.py
+
+# Backtest
+python backtester.py --universe small --weeks 100 --top-coins 50
 ```
 
-> 💡 Run via cron, Lambda, or EventBridge.
+---
+
+## Running Modes
+
+| Mode | Command | What it does | Frequency |
+|---|---|---|---|
+| **Daily scanner** | `python daily_scanner.py --universe all` | Multi-universe scan with LLM news analysis | Daily via cron |
+| **Small-cap focus** | `python daily_scanner.py --universe small` | Rank 201-1000 only | Daily |
+| **Weekly report** | `python monitor.py` | Full analysis + LLM report + Excel | Weekly |
+| **Backtester** | `python backtester.py --universe small --weeks 100` | Validate signals against history | Ad-hoc |
+| **Test email** | `python send_test_email.py` | Sample report with mock data | Ad-hoc |
 
 ---
 
-## ⚙️ Config Options
+## Two-Stage Architecture
 
-| Variable                                | Description                                    |
-|----------------------------------------|------------------------------------------------|
-| `TEST_ONLY`                             | Run on a small subset for testing              |
-| `RESULTS_FILE`                          | Output filename for saving results             |
-| `HIGH_VOLATILITY_THRESHOLD`            | Flag coins with high volatility                |
-| `FEAR_GREED_THRESHOLD`                 | Fear & Greed Index threshold                   |
-| `CUMULATIVE_SCORE_REPORTING_THRESHOLD` | Min score required to include coin in report   |
+```
+Stage 1: Score ALL 200+ coins (free quantitative signals)
+  ├── CoinPaprika bulk ticker (1 API call for all coins)
+  ├── CoinPaprika historical per coin (~200 calls)
+  ├── Fear & Greed Index (1 call)
+  ├── 11 signals: price, volume, RSI, growth, FNG, ticker features
+  ├── 0 news calls, 0 LLM calls
+  └── Output: ranked list → filter to top ~20
 
----
+Stage 2: LLM News Analysis for TOP ~20 only
+  ├── Google News RSS per coin (~20 fetches, free)
+  ├── LLM analysis (~$0.01/coin):
+  │   ├── Crypto-aware sentiment (-1.0 to +1.0)
+  │   ├── Catalyst detection (exchange_listing, hack, lawsuit, etc.)
+  │   ├── 1-sentence summary + key risk
+  │   └── Confidence score
+  ├── News velocity (article count as attention signal)
+  ├── Score adjustment: (sentiment × 2 × confidence) + catalyst_bonus + velocity_bonus
+  └── Fallback: VADER if LLM unavailable
 
-## 📊 Metrics Tracked (via Santiment)
+Stage 3: AI Commentary + Email (~1 LLM call)
+```
 
-- **Development Activity** – GitHub commit activity  
-- **Daily Active Addresses** – Network usage metrics  
-- **Sentiment Signals** – From media and social platforms  
-- **Price & Volume** – Historical performance data
-
----
-
-## 🤖 GPT-4o Intelligence
-
-GPT-4o combines market, sentiment, and social signals to generate:
-- Natural-language investment briefs
-- Summarized outlooks
-- Coin-specific recommendations
-
----
-
-## ☁️ Deployment Notes
-
-Deploy cheaply on AWS using:
-- EC2 `t2.micro` instance (shutdown after 96h)
-- Lambda + EventBridge for scheduling
-- CloudFormation for VPC and IAM setup
-
-> Runtime (1000 coins): ~a few hours  
-> API Costs (monthly): ~$100 with paid tiers
+**Principle:** Expensive operations only run on pre-qualified coins.
 
 ---
 
-## 🛠️ Contributing
+## Scoring System
 
-PRs welcome!  
-Fork → Improve → Submit a pull request 💪
+### Stage 1: Quantitative Signals (16-point scale)
+
+11 signals scored from price/volume/ticker data. Weights differ per universe based on backtesting.
+
+| Category | Signal | Range | Large-Cap Weight | Small-Cap Weight | Backtested? |
+|---|---|---|---|---|---|
+| Price | Price Change Score | 0-3 | -1.0 (contrarian) | +1.5 (momentum) | Yes |
+| Price | Consistent Weekly Growth | 0-1 | +1.0 | **+3.0** (best signal) | Yes |
+| Price | Consistent Monthly Growth | 0-1 | **+3.0** (best signal) | +0.5 | Yes |
+| Price | Trend Conflict | 0-2 | +1.5 | -1.0 (harmful) | Yes |
+| Volume | Volume Change Score | 0-3 | +1.5 | +1.5 | Yes |
+| Volume | Sustained Volume Growth | 0-1 | +0.5 | +1.0 | Yes |
+| Technical | RSI Score | 0-1 | **+3.0** | +0.5 | Yes |
+| Market | Fear & Greed | 0-1 | +1.0 | +0.5 | No |
+| Ticker | Volume Spike 24h | 0-1 | +1.0 | +3.0 | No (live only) |
+| Ticker | Distance from ATH | 0-1 | +0.5 | +2.0 | No (live only) |
+| Ticker | Multi-TF Momentum | 0-1 | -0.5 (contrarian) | +1.5 | No (live only) |
+
+**Key finding:** Signals behave OPPOSITE between large and small caps. Momentum chasing hurts large caps but helps small caps. RSI oversold bounces are strong for large caps but weak for small caps.
+
+### Stage 2: News Confirmation (LLM-powered)
+
+Applied only to shortlisted coins. Adjusts weighted score by up to ±4.0.
+
+| Component | What it does | Adjustment |
+|---|---|---|
+| **LLM Sentiment** | Crypto-aware analysis of 20 Google News headlines | sentiment × 2.0 × confidence |
+| **Catalyst Detection** | Exchange listing (+1.5), partnership (+0.5), hack (-2.0), lawsuit (-1.5), regulatory (-1.0) | Per catalyst |
+| **News Velocity** | 15+ articles = high attention (+0.5), 8+ = medium (+0.2) | Bonus |
+| **Fallback** | VADER sentiment if LLM unavailable | sentiment × 2.0 |
 
 ---
 
-## 📬 Contact
+## Backtesting Results
 
-Open an [issue](https://github.com/sjmoran/crypto-panda/issues) with questions or feedback.
+### Large-Cap (4-Year: May 2022 - Sep 2024, 22 coins, 2,518 observations)
+
+| Metric | Equal-Weighted | Evidence-Weighted |
+|---|---|---|
+| 7d correlation | 0.021 | **0.054** (2.6x better) |
+| 7d top 20% return | +1.15%/week | **+1.99%/week** |
+| 30d top 20% return | +3.25%/month | **+4.29%/month** |
+
+**Best signals:** Monthly growth (+1.20%), Trend conflict (+1.52%), RSI (+0.89%).
+
+### Small-Cap (2-Year: Apr 2024 - Mar 2026, 50 coins, 3,140 observations)
+
+| Metric | Result |
+|---|---|
+| 7d score correlation | **0.068** (strongest of any universe) |
+| Top 20% vs bottom 20% spread | **+2.77%/week** |
+| 30d avg peak return | **+18.40%** (but endpoint only -0.21%) |
+| Best exit strategy | **Trailing stop (+1.11%)** — only profitable strategy |
+
+**Best signals:** Weekly growth (+2.31%), Volume (+0.81%), Price momentum (+0.68%).
+
+### Bear Market (Oct 2025 - Mar 2026, 584 observations)
+
+| Metric | Result |
+|---|---|
+| Weighted top 20% + combined exit | **+3.48%** |
+| Weighted bottom 20% | **-6.02%** |
+| Spread | **+9.50%** |
+
+### Key Takeaways
+
+1. **Evidence-weighted scoring works** — beats equal-weighted across 4 years
+2. **Signals behave opposite between cap sizes** — one set of weights does NOT fit all
+3. **Exit timing matters more than entry** — 10-18% of returns left on table without stops
+4. **Most signals are noise** — only 3-4 of 11 consistently correlate with returns
+5. **Simplicity wins** — removing Santiment, keywords, tweets improved performance
 
 ---
 
-## ⚠️ Disclaimer
+## Cost Philosophy
 
-> **Not financial advice.**  
-> Use this project at your own risk. Always do your own research and consider consulting a licensed advisor before making trading decisions. This article is provided for informational and educational purposes only and should not be construed as financial, legal, or investment advice.
+Started at $170/mo in v1. Now $100/mo with better results. Every dependency was earned or removed.
 
-> The views and opinions expressed here are solely my own and do not necessarily reflect the official policy, position, or opinions of my employer, past or present, or any organizations I am affiliated with. All content is provided in a personal capacity.
+**Removed (no measurable value in backtesting):**
+- Santiment API ($100/mo) — on-chain metrics showed zero correlation
+- CryptoNews API ($0-30/mo) — replaced with free Google News RSS
+- Tweet score — just counted tweets, no quality signal
+- Surge keyword matching — fuzzy matching, high false positives
+- Digest score — binary presence detection
+- Event score — just "event exists"
+
+**What remains:**
+
+| Source | Cost | Why it earned its place |
+|---|---|---|
+| CoinPaprika Starter | $99/mo | 5yr history, real-time tickers. Powers all backtestable signals. |
+| Google News RSS | Free | 20 headlines/coin. Stage 2 only (~20 queries/run). |
+| Alternative.me | Free | Fear & Greed Index (1 call/run). |
+| CoinGecko | Free | Fallback if no CoinPaprika key. |
+| VADER | Free (local) | Fallback if LLM unavailable. |
+| LLM | ~$1-3/run | News analysis + commentary. Or $0 with local Ollama. |
+| Brevo SMTP | Free | 300 emails/day. |
+| **Total** | **~$100/mo** | |
 
 ---
 
-## 📄 License
+## Architecture
 
-This project is licensed under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/).  
-See the [LICENSE](LICENSE) file for more.
+```
+daily_scanner.py          # Daily: two-stage scan, LLM news, email
+monitor.py                # Weekly: full analysis, LLM report, Excel
+backtester.py             # Validate signals against 4+ years of data
+
+coin_analysis.py          # Scoring engine + LLM news analysis + Google News
+coin_universe.py          # Per-universe weights, exit targets, rank ranges
+features.py               # Volume spike, ATH distance, MTF momentum
+api_clients.py            # CoinPaprika, Fear & Greed
+report_generation.py      # LLM abstraction, HTML email, Excel
+data_management.py        # Aurora PostgreSQL + news sentiment persistence
+config.py                 # Configuration
+logging_config.py         # Shared logging
+plotting.py               # Charts
+send_test_email.py        # Test with mock data
+```
+
+**14 modules, ~5,200 lines, 22 unit tests.**
 
 ---
 
-## 🙏 Acknowledgments
+## Environment Variables
+
+See [`.env.example`](.env.example). Key ones:
+
+| Variable | Required | Description |
+|---|---|---|
+| `COIN_PAPRIKA_API_KEY` | Yes | CoinPaprika Pro ($99/mo) |
+| `OPENAI_API_KEY` | For LLM features | Or set `LLM_PROVIDER` for alternatives |
+| `LLM_PROVIDER` | No | `openai` (default), `anthropic`, `ollama` |
+| `LLM_MODEL` | No | Default: `gpt-4.1` |
+| `LLM_BASE_URL` | No | Custom endpoint for Ollama, vLLM |
+| `EMAIL_FROM` | Yes | Verified sender address |
+| `EMAIL_TO` | Yes | Recipient(s) |
+| `SMTP_SERVER` | Yes | e.g. `smtp-relay.brevo.com` |
+| `SMTP_USERNAME` / `SMTP_PASSWORD` | Yes | SMTP credentials |
+
+---
+
+## Disclaimer
+
+> **THIS SOFTWARE IS NOT FINANCIAL ADVICE AND SHOULD NOT BE RELIED UPON FOR INVESTMENT DECISIONS.**
+>
+> Crypto-Panda is an **educational and research tool only**. The scoring system, backtesting results, and AI-generated outputs are provided for informational purposes only. The author is not a licensed financial adviser.
+>
+> **Key risks:**
+> - Backtesting does not guarantee future results. Correlations are weak (0.02-0.07) and may not persist.
+> - Cryptocurrency markets are extremely volatile. You can lose all of your investment.
+> - Small-cap coins carry additional risks: low liquidity, manipulation, rug pulls, total loss.
+> - LLM-generated analysis may contain errors or hallucinations.
+> - No warranty is provided. Software is "as is."
+>
+> You are solely responsible for your own decisions. Always DYOR and consult a qualified financial adviser. Never invest money you cannot afford to lose.
+
+---
+
+## License
+
+Licensed under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/). See [LICENSE](LICENSE).
+
+---
+
+## Acknowledgments
 
 - [CoinPaprika API](https://api.coinpaprika.com/)
-- [Santiment API](https://santiment.net/)
-- [OpenAI GPT-4o](https://openai.com/)
+- [CoinGecko API](https://www.coingecko.com/en/api)
+- [Google News RSS](https://news.google.com/)
 - [Fear and Greed Index](https://alternative.me/crypto/fear-and-greed-index/)
+- [OpenAI](https://openai.com/) / [Anthropic](https://anthropic.com/)

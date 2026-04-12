@@ -7,7 +7,7 @@ import json
 import pandas as pd
 import logging
 from datetime import datetime, timezone
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from tqdm import tqdm
 import traceback
 from collections import defaultdict
@@ -17,10 +17,6 @@ from pathlib import Path
 from typing import Union
 
 from api_clients import (
-    get_sundown_digest,
-    fetch_trending_coins_scores,
-    fetch_news_for_past_week,
-    fetch_santiment_slugs,
     call_with_retries,
     filter_active_and_ranked_coins
 )
@@ -29,6 +25,8 @@ from data_management import (
     save_result_to_csv,
     retrieve_historical_data_from_aurora,
     save_cumulative_score_to_aurora,
+    save_cumulative_scores_batch,
+    save_detailed_scores_batch,
     create_coin_data_table_if_not_exists,
     load_existing_results,
     load_tickers,
@@ -37,7 +35,6 @@ from plotting import plot_top_coins_over_time
 from report_generation import (
     gpt4o_summarize_each_coin,
     save_report_to_excel,
-    summarize_sundown_digest,
     generate_html_report_with_recommendations,
     send_email_with_report,
 )
@@ -49,60 +46,20 @@ from config import (
     LOG_DIR,
     COIN_PAPRIKA_API_KEY,
     FEAR_GREED_THRESHOLD,
+    MAX_WORKERS,
+    COIN_TIMEOUT,
 )
 
 from coinpaprika import client as Coinpaprika
 
 # ============================
-# Logging (console + single rolling file per script)
+# Logging
 # ============================
 
-def setup_logging(name: str,
-                  log_dir: Union[str, Path] = None,
-                  level: str = None) -> logging.Logger:
-    """
-    Create a logger that writes to console and a single per-script logfile.
-    - File path: <log_dir>/<script_stem>.log (overwrites each run)
-    - UTC timestamps, ISO-like format
-    """
-    base_dir = Path(__file__).resolve().parent
-    log_dir = Path(log_dir or (base_dir / "../logs")).resolve()
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    log_path = log_dir / f"{Path(__file__).stem}.log"
-
-    level_name = (level or os.getenv("LOG_LEVEL", "INFO")).upper()
-    level_val = getattr(logging, level_name, logging.INFO)
-
-    logger = logging.getLogger(name)
-    logger.setLevel(level_val)
-    logger.propagate = False
-
-    # Clear existing handlers (avoid dupes on re-imports)
-    for h in list(logger.handlers):
-        logger.removeHandler(h)
-
-    fmt = "%(asctime)sZ [%(levelname)s] %(name)s | %(message)s"
-    datefmt = "%Y-%m-%dT%H:%M:%S"
-    formatter = logging.Formatter(fmt=fmt, datefmt=datefmt)
-
-    # Console handler
-    ch = logging.StreamHandler()
-    ch.setLevel(level_val)
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
-
-    # File handler (overwrite each run)
-    fh = logging.FileHandler(str(log_path), mode="w", encoding="utf-8", delay=False)
-    fh.setLevel(level_val)
-    fh.setFormatter(formatter)
-    logger.addHandler(fh)
-
-    logger.info(f"Logging started → {log_path} (level={level_name})")
-    return logger
+from logging_config import setup_logging
 
 # Instantiate module logger
-logger = setup_logging(__name__, log_dir=LOG_DIR)
+logger = setup_logging(__name__, log_dir=LOG_DIR, caller_file=__file__)
 
 # ----------------------------
 # Setup
@@ -125,16 +82,12 @@ def utc_today_iso() -> str:
 def process_single_coin(
     coin: dict,
     existing_results: pd.DataFrame,
-    tickers_dict: dict,
-    digest_tickers: list,
-    trending_coins_scores: dict,
-    santiment_slugs_df: pd.DataFrame,
+    all_tickers: dict,
     end_date: str,
-    score_usage: defaultdict,
-    coin_audit_log: list,
 ):
     """
-    Processes a single coin and records scoring usage + audit details.
+    Processes a single coin. Returns (result_dict, audit_entry) or None.
+    Thread-safe: no shared mutable state.
     """
     try:
         coin_id = coin["id"]
@@ -146,70 +99,28 @@ def process_single_coin(
 
         logger.debug(f"Processing {coin_name} ({coin_id})")
 
-        coins_dict = {coin_name: str(tickers_dict.get(coin_name, "")).upper()}
-        news_df = fetch_news_for_past_week(coins_dict)
-
         result = analyze_coin(
             coin_id,
             coin_name,
             end_date,
-            news_df,
-            digest_tickers,
-            trending_coins_scores,  # may be {}
-            santiment_slugs_df,
+            ticker_data=all_tickers.get(coin_id, {}),
         )
 
-        # Score usage tracking (defensive conversions)
-        score_usage["price_change_score"].append(int(result.get("price_change_score", 0) or 0))
-        score_usage["volume_change_score"].append(int(result.get("volume_change_score", 0) or 0))
-        score_usage["tweet_score"].append(1 if result.get("tweets") not in (None, "None", 0) else 0)
-        score_usage["sentiment_score"].append(int(result.get("sentiment_score", 0) or 0))
-        score_usage["surging_keywords_score"].append(int(result.get("surging_keywords_score", 0) or 0))
-        score_usage["consistent_growth"].append(1 if result.get("consistent_growth", "No") == "Yes" else 0)
-        score_usage["sustained_volume_growth"].append(1 if result.get("sustained_volume_growth", "No") == "Yes" else 0)
-
-        try:
-            fear_greed_value = int(result.get("fear_and_greed_index", 0) or 0)
-            score_usage["fear_and_greed_index"].append(1 if fear_greed_value > FEAR_GREED_THRESHOLD else 0)
-        except (ValueError, TypeError, KeyError) as e:
-            logger.debug(f"Failed to process fear_and_greed_index: {e}")
-            score_usage["fear_and_greed_index"].append(0)
-
-        score_usage["event_score"].append(1 if (result.get("events", 0) or 0) > 0 else 0)
-        score_usage["digest_score"].append(int(result.get("news_digest_score", 0) or 0))
-        score_usage["trending_score"].append(float(result.get("trending_score", 0) or 0))
-        score_usage["santiment_score"].append(int(result.get("santiment_score", 0) or 0))
-        score_usage["santiment_surge_score"].append(int(result.get("santiment_surge_score", 0) or 0))
-        score_usage["consistent_monthly_growth"].append(1 if result.get("consistent_monthly_growth", "No") == "Yes" else 0)
-        score_usage["trend_conflict"].append(1 if result.get("trend_conflict", "No") == "Yes" else 0)
-        score_usage["cumulative_score"].append(int(result.get("cumulative_score", 0) or 0))
-        score_usage["cumulative_score_percentage"].append(float(result.get("cumulative_score_percentage", 0) or 0))
-
-        # Persist
         save_result_to_csv(result)
-        save_cumulative_score_to_aurora(
-            result["coin_id"], result["coin_name"], result["cumulative_score_percentage"]
-        )
 
-        # Audit
         audit_entry = {
             "coin_id": coin_id,
             "coin_name": coin_name,
             "ticker": coins_dict.get(coin_name),
             "date": datetime.now(timezone.utc).isoformat(),
-            "included_in_report": None,  # Set later
+            "included_in_report": None,
             "reason_for_exclusion": None,
             "scores": {
                 "price_change_score": result.get("price_change_score"),
                 "volume_change_score": result.get("volume_change_score"),
                 "sentiment_score": result.get("sentiment_score"),
-                "surging_keywords_score": result.get("surging_keywords_score"),
                 "fear_and_greed_index": result.get("fear_and_greed_index"),
-                "event_score": result.get("events"),
-                "digest_score": result.get("news_digest_score"),
                 "trending_score": result.get("trending_score"),
-                "santiment_score": result.get("santiment_score"),
-                "santiment_surge_score": result.get("santiment_surge_score"),
                 "consistent_monthly_growth": result.get("consistent_monthly_growth"),
                 "trend_conflict": result.get("trend_conflict"),
                 "cumulative_score": result.get("cumulative_score"),
@@ -218,13 +129,34 @@ def process_single_coin(
             },
         }
 
-        coin_audit_log.append(audit_entry)
-        return result
+        return (result, audit_entry)
 
     except Exception as e:
-        logger.debug(f"Error processing {coin.get('name')} ({coin.get('id')}): {e}")
-        logger.debug(traceback.format_exc())
+        logger.error(f"Error processing {coin.get('name')} ({coin.get('id')}): {e}")
+        logger.error(traceback.format_exc())
         return None
+
+
+def _collect_score_usage(result: dict, score_usage: defaultdict):
+    """Aggregate a single result into score_usage. Called from main thread only."""
+    score_usage["price_change_score"].append(int(result.get("price_change_score", 0) or 0))
+    score_usage["volume_change_score"].append(int(result.get("volume_change_score", 0) or 0))
+    score_usage["sentiment_score"].append(int(result.get("sentiment_score", 0) or 0))
+    score_usage["consistent_growth"].append(1 if result.get("consistent_growth", "No") == "Yes" else 0)
+    score_usage["sustained_volume_growth"].append(1 if result.get("sustained_volume_growth", "No") == "Yes" else 0)
+
+    try:
+        fear_greed_value = int(result.get("fear_and_greed_index", 0) or 0)
+        score_usage["fear_and_greed_index"].append(1 if fear_greed_value > FEAR_GREED_THRESHOLD else 0)
+    except (ValueError, TypeError, KeyError):
+        score_usage["fear_and_greed_index"].append(0)
+
+
+    score_usage["trending_score"].append(float(result.get("trending_score", 0) or 0))
+    score_usage["consistent_monthly_growth"].append(1 if result.get("consistent_monthly_growth", "No") == "Yes" else 0)
+    score_usage["trend_conflict"].append(1 if result.get("trend_conflict", "No") == "Yes" else 0)
+    score_usage["cumulative_score"].append(int(result.get("cumulative_score", 0) or 0))
+    score_usage["cumulative_score_percentage"].append(float(result.get("cumulative_score_percentage", 0) or 0))
 
 
 def summarize_scores(score_usage: defaultdict, output_dir: str = "../logs/"):
@@ -305,40 +237,77 @@ def monitor_coins_and_send_report():
 
     tickers_dict = load_tickers(CRYPTO_NEWS_TICKERS)
 
-    # Sundown digest
-    sundown_digest = get_sundown_digest()
-    digest_summary = summarize_sundown_digest(sundown_digest)
-    digest_tickers = digest_summary.get("tickers", [])
-    logger.debug(f"Sundown digest tickers extracted: {len(digest_tickers)}")
 
-    # Trending coins (defensive; may be {})
-    trending_coins_scores = fetch_trending_coins_scores()
-    if not trending_coins_scores:
-        logger.debug("Trending coins scores unavailable or empty; continuing without trending influence.")
 
-    # Santiment slugs
-    santiment_slugs_df = fetch_santiment_slugs()
+    # Market regime detection via BTC price
+    try:
+        from api_clients import fetch_historical_ticker_data
+        btc_start = (datetime.now(timezone.utc) - timedelta(days=210)).date().isoformat()
+        btc_df = fetch_historical_ticker_data("btc-bitcoin", btc_start, end_date)
+        if btc_df is not None and not btc_df.empty and len(btc_df) >= 200:
+            ma50 = btc_df['price'].rolling(50).mean().iloc[-1]
+            ma200 = btc_df['price'].rolling(200).mean().iloc[-1]
+            btc_price = btc_df['price'].iloc[-1]
+            if btc_price > ma50 and ma50 > ma200:
+                market_regime = "bull"
+            elif btc_price < ma50 and ma50 < ma200:
+                market_regime = "bear"
+            else:
+                market_regime = "sideways"
+        else:
+            market_regime = "unknown"
+    except Exception as e:
+        logger.warning(f"Could not determine market regime: {e}")
+        market_regime = "unknown"
+
+    logger.info(f"Market regime: {market_regime}")
+    if market_regime in ("bear", "sideways"):
+        logger.warning(f"Market regime is {market_regime}. Scoring accuracy is reduced in non-bull markets. Report will include regime warning.")
+
+    # Fetch all tickers in bulk (1 API call) for ticker features
+    try:
+        all_tickers = {t['id']: t for t in call_with_retries(client.tickers)}
+        logger.info(f"Fetched {len(all_tickers)} tickers for ticker features")
+    except Exception:
+        logger.warning("Could not fetch bulk tickers for features")
+        all_tickers = {}
 
     score_usage: defaultdict = defaultdict(list)
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        futures = executor.map(
-            lambda c: process_single_coin(
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        future_to_coin = {
+            executor.submit(
+                process_single_coin,
                 c,
                 existing_results,
-                tickers_dict,
-                digest_tickers,
-                trending_coins_scores,
-                santiment_slugs_df,
+                all_tickers,
                 end_date,
-                score_usage,
-                coin_audit_log,
-            ),
-            coins_to_monitor,
-        )
-        results_list = [
-            r for r in tqdm(futures, total=len(coins_to_monitor), desc="Processing Coins") if r is not None
-        ]
+            ): c
+            for c in coins_to_monitor
+        }
+        results_list = []
+        for future in tqdm(as_completed(future_to_coin), total=len(future_to_coin), desc="Processing Coins"):
+            try:
+                output = future.result(timeout=COIN_TIMEOUT)
+                if output is not None:
+                    result, audit_entry = output
+                    results_list.append(result)
+                    coin_audit_log.append(audit_entry)
+                    _collect_score_usage(result, score_usage)
+            except FuturesTimeoutError:
+                coin = future_to_coin[future]
+                logger.error(f"Timeout processing {coin.get('name')} ({coin.get('id')})")
+            except Exception as e:
+                coin = future_to_coin[future]
+                logger.error(f"Unhandled error for {coin.get('name')} ({coin.get('id')}): {e}")
+
+    # Batch save all cumulative scores to Aurora in a single connection
+    aurora_scores = [
+        (r["coin_id"], r["coin_name"], r["cumulative_score_percentage"])
+        for r in results_list
+    ]
+    save_cumulative_scores_batch(aurora_scores)
+    save_detailed_scores_batch(results_list)
 
     if not results_list:
         logger.debug("No coin results produced; exiting after score summary.")
@@ -372,11 +341,19 @@ def monitor_coins_and_send_report():
             report_entries = sorted(report_entries, key=lambda x: x.get("cumulative_score", 0), reverse=True)
             logger.debug(f"Report entries after sorting: {len(report_entries)} entries")
 
+            # Stage 2: Fetch news (Google News RSS, free) for shortlisted coins only
+            if report_entries:
+                from coin_analysis import apply_news_confirmation
+                logger.info(f"Stage 2: Fetching news for {len(report_entries)} shortlisted coins via Google News RSS...")
+                for entry in report_entries:
+                    apply_news_confirmation(entry, entry["coin_name"])
+                logger.info(f"News sentiment applied. Flags: {[e.get('news_flag', 'N/A') for e in report_entries[:5]]}")
+
             # Ensure numeric fields are correctly typed
             numeric_fields = [
                 "price_change_score", "volume_change_score", "sentiment_score",
-                "surging_keywords_score", "news_digest_score", "trending_score",
-                "santiment_score", "santiment_surge_score", "cumulative_score",
+                "trending_score",
+                "cumulative_score",
                 "cumulative_score_percentage", "fear_and_greed_index", "market_cap",
                 "volume_24h", "events",
             ]
@@ -389,7 +366,7 @@ def monitor_coins_and_send_report():
             gpt_recommendations = gpt4o_summarize_each_coin(df)
             logger.debug("GPT-4o recommendations generated.")
 
-            html_report = generate_html_report_with_recommendations(report_entries, digest_summary, gpt_recommendations)
+            html_report = generate_html_report_with_recommendations(report_entries, None, gpt_recommendations, market_regime=market_regime)
             logger.debug("HTML report generated successfully.")
 
             attachment_path = save_report_to_excel(report_entries)
@@ -407,10 +384,13 @@ def monitor_coins_and_send_report():
 
             if os.path.exists(results_file):
                 try:
-                    os.remove(results_file)
-                    logger.debug(f"{results_file} has been deleted successfully.")
+                    archive_dir = os.path.join(LOG_DIR, "processed")
+                    os.makedirs(archive_dir, exist_ok=True)
+                    archived_path = os.path.join(archive_dir, os.path.basename(results_file))
+                    os.rename(results_file, archived_path)
+                    logger.debug(f"{results_file} archived to {archived_path}.")
                 except Exception as e:
-                    logger.debug(f"Failed to delete {results_file}: {e}")
+                    logger.debug(f"Failed to archive {results_file}: {e}")
 
             summarize_scores(score_usage, output_dir=LOG_DIR)
 

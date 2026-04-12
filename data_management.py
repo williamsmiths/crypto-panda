@@ -4,6 +4,7 @@
 import os
 import glob
 import logging
+from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, List, Mapping, Optional, Tuple, Union
@@ -17,52 +18,92 @@ from sqlalchemy.exc import SQLAlchemyError
 from config import LOG_DIR
 
 # ============================
-# Logging (console + single rolling file per script)
+# Logging
 # ============================
 
-def setup_logging(name: str,
-                  log_dir: Union[str, Path] = None,
-                  level: str = None) -> logging.Logger:
+from logging_config import setup_logging
+
+logger = setup_logging(__name__, caller_file=__file__)
+
+# ----------------------------
+# Database connection helper
+# ----------------------------
+
+@contextmanager
+def get_aurora_connection():
+    """Context manager for Aurora PostgreSQL connections."""
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=os.getenv('AURORA_HOST'),
+            database=os.getenv('AURORA_DB'),
+            user=os.getenv('AURORA_USER'),
+            password=os.getenv('AURORA_PASSWORD'),
+            port=int(os.getenv('AURORA_PORT', '5432'))
+        )
+        yield conn
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def save_news_sentiment_history(coin_results: list) -> None:
     """
-    Create a logger that writes to console and a single per-script logfile.
-    - File path: <log_dir>/<script_stem>.log (overwrites each run)
-    - UTC timestamps, ISO-like format
+    Persist daily news sentiment data to Aurora for future backtesting.
+    Over time this builds a dataset to validate news as a signal.
     """
-    base_dir = Path(__file__).resolve().parent
-    log_dir = Path(log_dir or (base_dir / "../logs")).resolve()
-    log_dir.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for r in coin_results:
+        if r.get("news_article_count", 0) > 0:
+            rows.append((
+                r.get("coin_id", r.get("coin_name", "")),
+                r.get("coin_name", ""),
+                datetime.now(timezone.utc),
+                r.get("raw_sentiment", 0),
+                r.get("news_flag", "NO_DATA"),
+                r.get("news_article_count", 0),
+                r.get("news_velocity", "low"),
+                ",".join(r.get("news_catalysts", [])),
+                r.get("news_summary", "")[:500],
+                r.get("news_key_risk", "")[:500],
+                r.get("news_analysis_method", ""),
+            ))
 
-    log_path = log_dir / f"{Path(__file__).stem}.log"
+    if not rows:
+        return
 
-    level_name = (level or os.getenv("LOG_LEVEL", "INFO")).upper()
-    level_val = getattr(logging, level_name, logging.INFO)
+    try:
+        with get_aurora_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS news_sentiment_history (
+                        id SERIAL PRIMARY KEY,
+                        coin_id VARCHAR(255) NOT NULL,
+                        coin_name VARCHAR(255),
+                        recorded_at TIMESTAMP DEFAULT NOW(),
+                        sentiment FLOAT DEFAULT 0,
+                        news_flag VARCHAR(20),
+                        article_count INT DEFAULT 0,
+                        velocity VARCHAR(20),
+                        catalysts TEXT,
+                        summary TEXT,
+                        key_risk TEXT,
+                        analysis_method VARCHAR(20),
+                        UNIQUE (coin_id, recorded_at)
+                    );
+                """)
+                cur.executemany("""
+                    INSERT INTO news_sentiment_history
+                    (coin_id, coin_name, recorded_at, sentiment, news_flag, article_count,
+                     velocity, catalysts, summary, key_risk, analysis_method)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (coin_id, recorded_at) DO UPDATE SET sentiment = EXCLUDED.sentiment;
+                """, rows)
+                conn.commit()
+                logger.info(f"Saved {len(rows)} news sentiment records to Aurora.")
+    except Exception as e:
+        logger.warning(f"Could not save news sentiment history: {e}")
 
-    logger = logging.getLogger(name)
-    logger.setLevel(level_val)
-    logger.propagate = False
-
-    # Clear existing handlers to avoid dupes on re-imports
-    for h in list(logger.handlers):
-        logger.removeHandler(h)
-
-    fmt = "%(asctime)sZ [%(levelname)s] %(name)s | %(message)s"
-    datefmt = "%Y-%m-%dT%H:%M:%S"
-    formatter = logging.Formatter(fmt=fmt, datefmt=datefmt)
-
-    ch = logging.StreamHandler()
-    ch.setLevel(level_val)
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
-
-    fh = logging.FileHandler(str(log_path), mode="w", encoding="utf-8", delay=False)
-    fh.setLevel(level_val)
-    fh.setFormatter(formatter)
-    logger.addHandler(fh)
-
-    logger.info(f"Logging started → {log_path} (level={level_name})")
-    return logger
-
-logger = setup_logging(__name__)
 
 # ----------------------------
 # Helpers
@@ -201,90 +242,158 @@ def save_cumulative_score_to_aurora(coin_id: str, coin_name: str, cumulative_sco
     """
     Save a cumulative score for a specific coin with a UTC date-based timestamp.
     """
-    connection = None
-    cursor = None
     try:
-        connection = psycopg2.connect(
-            host=os.getenv('AURORA_HOST'),
-            database=os.getenv('AURORA_DB'),
-            user=os.getenv('AURORA_USER'),
-            password=os.getenv('AURORA_PASSWORD'),
-            port=os.getenv('AURORA_PORT', 5432)
-        )
-        cursor = connection.cursor()
-        insert_query = """
-            INSERT INTO coin_data (coin_id, coin_name, cumulative_score, timestamp)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (coin_id, timestamp)
-            DO UPDATE SET cumulative_score = EXCLUDED.cumulative_score;
-        """
-        current_date = datetime.now(timezone.utc).date()
-        cursor.execute(insert_query, (coin_id, coin_name, cumulative_score, current_date))
-        connection.commit()
-        logger.info(f"Cumulative score saved/updated for {coin_name} on {current_date} (score={cumulative_score}).")
-
+        with get_aurora_connection() as conn:
+            with conn.cursor() as cur:
+                insert_query = """
+                    INSERT INTO coin_data (coin_id, coin_name, cumulative_score, timestamp)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (coin_id, timestamp)
+                    DO UPDATE SET cumulative_score = EXCLUDED.cumulative_score;
+                """
+                current_date = datetime.now(timezone.utc).date()
+                cur.execute(insert_query, (coin_id, coin_name, cumulative_score, current_date))
+                conn.commit()
+                logger.info(f"Cumulative score saved/updated for {coin_name} on {current_date} (score={cumulative_score}).")
     except OperationalError as e:
         logger.error(f"Error connecting to Amazon Aurora DB: {e}")
     except Exception as e:
         logger.error(f"Error saving cumulative score for {coin_name}: {e}")
-    finally:
-        if cursor is not None:
-            try:
-                cursor.close()
-                logger.debug("Cursor closed.")
-            except Exception as e:
-                logger.error(f"Error closing cursor: {e}")
-        if connection is not None:
-            try:
-                connection.close()
-                logger.debug("PostgreSQL connection closed.")
-            except Exception as e:
-                logger.error(f"Error closing connection: {e}")
+
+def save_cumulative_scores_batch(scores: list) -> None:
+    """
+    Batch save cumulative scores for multiple coins in a single DB connection.
+    Each item in scores should be a tuple of (coin_id, coin_name, cumulative_score).
+    """
+    if not scores:
+        return
+
+    try:
+        with get_aurora_connection() as conn:
+            with conn.cursor() as cur:
+                insert_query = """
+                    INSERT INTO coin_data (coin_id, coin_name, cumulative_score, timestamp)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (coin_id, timestamp)
+                    DO UPDATE SET cumulative_score = EXCLUDED.cumulative_score;
+                """
+                current_date = datetime.now(timezone.utc).date()
+                rows = [(cid, cname, cscore, current_date) for cid, cname, cscore in scores]
+                cur.executemany(insert_query, rows)
+                conn.commit()
+                logger.info(f"Batch saved {len(rows)} cumulative scores to Aurora.")
+    except OperationalError as e:
+        logger.error(f"Error connecting to Amazon Aurora DB (batch save): {e}")
+    except Exception as e:
+        logger.error(f"Error batch saving cumulative scores: {e}")
+
+
+def save_detailed_scores_batch(results: list) -> None:
+    """
+    Batch save detailed sub-scores for backtesting analysis.
+    Each item in results should be the full result dict from analyze_coin.
+    """
+    if not results:
+        return
+
+    try:
+        with get_aurora_connection() as conn:
+            with conn.cursor() as cur:
+                insert_query = """
+                    INSERT INTO coin_scores_detailed (
+                        coin_id, coin_name, score_date,
+                        price_change_score, volume_change_score, tweet_score,
+                        consistent_growth_score, sustained_volume_growth_score,
+                        fear_and_greed_score, event_score, sentiment_score,
+                        surge_score, digest_score, trending_score,
+                        consistent_monthly_growth_score, trend_conflict_score,
+                        rsi_score, cumulative_score, cumulative_score_percentage,
+                        liquidity_risk, market_cap, volume_24h
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                    ON CONFLICT (coin_id, score_date)
+                    DO UPDATE SET cumulative_score = EXCLUDED.cumulative_score,
+                                  cumulative_score_percentage = EXCLUDED.cumulative_score_percentage;
+                """
+                current_ts = datetime.now(timezone.utc)
+                rows = []
+                for r in results:
+                    rows.append((
+                        r.get("coin_id"), r.get("coin_name"), current_ts,
+                        r.get("price_change_score", 0), r.get("volume_change_score", 0),
+                        min(1.0, r.get("tweets", 0) / 10.0) if r.get("tweets", 0) else 0,
+                        1 if r.get("consistent_growth") == "Yes" else 0,
+                        1 if r.get("sustained_volume_growth") == "Yes" else 0,
+                        r.get("fear_and_greed_score", 0) if isinstance(r.get("fear_and_greed_score"), (int, float)) else 0,
+                        1 if r.get("events", 0) > 0 else 0,
+                        r.get("sentiment_score", 0),
+                        r.get("trending_score", 0),
+                        1 if r.get("consistent_monthly_growth") == "Yes" else 0,
+                        1 if r.get("trend_conflict") == "Yes" else 0,
+                        r.get("rsi_score", 0),
+                        r.get("cumulative_score", 0), r.get("cumulative_score_percentage", 0),
+                        r.get("liquidity_risk", "Unknown"),
+                        r.get("market_cap", 0), r.get("volume_24h", 0),
+                    ))
+                cur.executemany(insert_query, rows)
+                conn.commit()
+                logger.info(f"Batch saved {len(rows)} detailed score records.")
+    except OperationalError as e:
+        logger.error(f"Error saving detailed scores: {e}")
+    except Exception as e:
+        logger.error(f"Error batch saving detailed scores: {e}")
+
 
 def create_coin_data_table_if_not_exists() -> None:
     """
     Creates the 'coin_data' table in Amazon Aurora (PostgreSQL) if it doesn't already exist,
     storing time series data for cumulative scores.
     """
-    connection = None
-    cursor = None
     try:
-        connection = psycopg2.connect(
-            host=os.getenv('AURORA_HOST'),
-            database=os.getenv('AURORA_DB'),
-            user=os.getenv('AURORA_USER'),
-            password=os.getenv('AURORA_PASSWORD'),
-            port=os.getenv('AURORA_PORT', 5432)
-        )
-        cursor = connection.cursor()
-        create_table_query = """
-        CREATE TABLE IF NOT EXISTS coin_data (
-            id SERIAL PRIMARY KEY,
-            coin_id VARCHAR(255) NOT NULL,
-            coin_name VARCHAR(255) NOT NULL,
-            cumulative_score FLOAT NOT NULL,
-            timestamp DATE DEFAULT CURRENT_DATE,
-            UNIQUE (coin_id, timestamp)
-        );
-        """
-        cursor.execute(create_table_query)
-        connection.commit()
-        logger.info("Table 'coin_data' created or already exists.")
-
+        with get_aurora_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS coin_data (
+                        id SERIAL PRIMARY KEY,
+                        coin_id VARCHAR(255) NOT NULL,
+                        coin_name VARCHAR(255) NOT NULL,
+                        cumulative_score FLOAT NOT NULL,
+                        timestamp TIMESTAMP DEFAULT NOW(),
+                        UNIQUE (coin_id, timestamp)
+                    );
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS coin_scores_detailed (
+                        id SERIAL PRIMARY KEY,
+                        coin_id VARCHAR(255) NOT NULL,
+                        coin_name VARCHAR(255) NOT NULL,
+                        score_date TIMESTAMP DEFAULT NOW(),
+                        price_change_score FLOAT DEFAULT 0,
+                        volume_change_score FLOAT DEFAULT 0,
+                        tweet_score FLOAT DEFAULT 0,
+                        consistent_growth_score FLOAT DEFAULT 0,
+                        sustained_volume_growth_score FLOAT DEFAULT 0,
+                        fear_and_greed_score FLOAT DEFAULT 0,
+                        event_score FLOAT DEFAULT 0,
+                        sentiment_score FLOAT DEFAULT 0,
+                        surge_score FLOAT DEFAULT 0,
+                        digest_score FLOAT DEFAULT 0,
+                        trending_score FLOAT DEFAULT 0,
+                        consistent_monthly_growth_score FLOAT DEFAULT 0,
+                        trend_conflict_score FLOAT DEFAULT 0,
+                        rsi_score FLOAT DEFAULT 0,
+                        cumulative_score FLOAT DEFAULT 0,
+                        cumulative_score_percentage FLOAT DEFAULT 0,
+                        liquidity_risk VARCHAR(20) DEFAULT 'Unknown',
+                        market_cap BIGINT DEFAULT 0,
+                        volume_24h BIGINT DEFAULT 0,
+                        UNIQUE (coin_id, score_date)
+                    );
+                """)
+                conn.commit()
+                logger.info("Tables 'coin_data' and 'coin_scores_detailed' created or already exist.")
     except OperationalError as e:
         logger.error(f"Error while connecting to Amazon Aurora: {e}")
     except Exception as e:
-        logger.error(f"Error creating table 'coin_data': {e}")
-    finally:
-        if cursor is not None:
-            try:
-                cursor.close()
-                logger.debug("Cursor closed.")
-            except Exception as e:
-                logger.error(f"Error closing cursor: {e}")
-        if connection is not None:
-            try:
-                connection.close()
-                logger.debug("PostgreSQL connection closed.")
-            except Exception as e:
-                logger.error(f"Error closing connection: {e}")
+        logger.error(f"Error creating tables: {e}")

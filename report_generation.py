@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import html as html_mod
 import os
 import re
 import json
@@ -32,58 +33,54 @@ from config import (
     SMTP_PASSWORD,
     SMTP_PORT,
     LOG_DIR,
+    LLM_PROVIDER,
+    LLM_MODEL,
+    LLM_BASE_URL,
 )
 from api_clients import call_with_retries
 
-# ============================
-# Logging (console + single rolling file per script)
-# ============================
 
-def setup_logging(name: str,
-                  log_dir: Union[str, Path] = None,
-                  level: str = None) -> logging.Logger:
+# ----------------------------
+# LLM abstraction layer
+# ----------------------------
+
+def llm_chat_completion(prompt: str, temperature: float = 0.0) -> str:
     """
-    Create a logger that writes to console and a single per-script logfile.
-    - File path: <log_dir>/<script_stem>.log (overwrites each run)
-    - UTC timestamps, ISO-like format
+    Send a chat completion request to the configured LLM provider.
+    Returns the response content string.
+
+    Supports: openai (default), anthropic, ollama, or any OpenAI-compatible endpoint.
+    Configure via LLM_PROVIDER, LLM_MODEL, LLM_BASE_URL env vars.
     """
-    base_dir = Path(__file__).resolve().parent
-    log_dir = Path(log_dir or (base_dir / "../logs")).resolve()
-    log_dir.mkdir(parents=True, exist_ok=True)
+    if LLM_PROVIDER == "anthropic":
+        import anthropic
+        client = anthropic.Anthropic()
+        response = client.messages.create(
+            model=LLM_MODEL,
+            max_tokens=4096,
+            temperature=temperature,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text
 
-    log_path = log_dir / f"{Path(__file__).stem}.log"
+    # OpenAI-compatible providers (openai, ollama, vllm, together, etc.)
+    if LLM_BASE_URL:
+        openai.api_base = LLM_BASE_URL
+    response = openai.ChatCompletion.create(
+        model=LLM_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        n=1,
+        temperature=temperature,
+    )
+    return response['choices'][0]['message']['content']
 
-    level_name = (level or os.getenv("LOG_LEVEL", "INFO")).upper()
-    level_val = getattr(logging, level_name, logging.INFO)
+# ============================
+# Logging
+# ============================
 
-    logger = logging.getLogger(name)
-    logger.setLevel(level_val)
-    logger.propagate = False
+from logging_config import setup_logging
 
-    # Clear existing handlers (avoid dupes on re-imports)
-    for h in list(logger.handlers):
-        logger.removeHandler(h)
-
-    fmt = "%(asctime)sZ [%(levelname)s] %(name)s | %(message)s"
-    datefmt = "%Y-%m-%dT%H:%M:%S"
-    formatter = logging.Formatter(fmt=fmt, datefmt=datefmt)
-
-    # Console handler
-    ch = logging.StreamHandler()
-    ch.setLevel(level_val)
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
-
-    # File handler (overwrite each run)
-    fh = logging.FileHandler(str(log_path), mode="w", encoding="utf-8", delay=False)
-    fh.setLevel(level_val)
-    fh.setFormatter(formatter)
-    logger.addHandler(fh)
-
-    logger.info(f"Logging started → {log_path} (level={level_name})")
-    return logger
-
-logger = setup_logging(__name__)
+logger = setup_logging(__name__, caller_file=__file__)
 
 # Ensure LOG_DIR exists for artifacts/flags
 Path(LOG_DIR).mkdir(parents=True, exist_ok=True)
@@ -102,7 +99,7 @@ def utc_today_iso() -> str:
 # HTML report rendering
 # ----------------------------
 
-def generate_html_report_with_recommendations(report_entries, digest_summary, gpt_recommendations):
+def generate_html_report_with_recommendations(report_entries, digest_summary, gpt_recommendations, market_regime="unknown"):
     """
     Generates an HTML report with summaries from the report entries, GPT-4o recommendations, and a plot of the top coins.
     """
@@ -122,6 +119,26 @@ def generate_html_report_with_recommendations(report_entries, digest_summary, gp
                 <ul style="list-style-type:disc;padding-left:20px;margin:0;">
                     {digest_items}
                 </ul>
+            </td>
+        </tr>
+    </table>
+    """
+
+    # Market regime banner
+    regime_colors = {"bull": "#d4edda", "bear": "#f8d7da", "sideways": "#fff3cd", "unknown": "#e2e3e5"}
+    regime_labels = {"bull": "BULL MARKET", "bear": "BEAR MARKET", "sideways": "SIDEWAYS MARKET", "unknown": "REGIME UNKNOWN"}
+    regime_msgs = {
+        "bull": "Scoring accuracy is highest in bull markets. Signals are more reliable.",
+        "bear": "Bear market detected. Exercise extra caution — scoring accuracy is reduced. Consider smaller position sizes.",
+        "sideways": "Sideways/choppy market. Signals may be unreliable. Consider waiting for a clear trend.",
+        "unknown": "Market regime could not be determined. Insufficient data for BTC moving averages.",
+    }
+    regime_banner = f"""
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:{regime_colors.get(market_regime, '#e2e3e5')};margin-bottom:15px;">
+        <tr>
+            <td style="padding:12px 20px;">
+                <strong style="font-size:15px;">{regime_labels.get(market_regime, 'UNKNOWN')}</strong>
+                <span style="font-size:13px;margin-left:10px;">{regime_msgs.get(market_regime, '')}</span>
             </td>
         </tr>
     </table>
@@ -172,15 +189,24 @@ def generate_html_report_with_recommendations(report_entries, digest_summary, gp
                     [e.get('coin_name') for e in report_entries[:10]]
                 )
 
-            coin_url = f"https://coinpaprika.com/coin/{matching_entry['coin_id']}/" if matching_entry else '#'
+            safe_coin_id = html_mod.escape(matching_entry['coin_id']) if matching_entry else ''
+            coin_url = f"https://coinpaprika.com/coin/{safe_coin_id}/" if matching_entry else '#'
             cumulative_score_percentage = matching_entry.get('cumulative_score_percentage', 'N/A') if matching_entry else 'N/A'
             background_color = "#d4edda" if str(item.get("recommendation", '')).strip().lower() == "yes" else "#ffe5b4"
-            coin_name = str(item.get("coin", "")).title()
+            coin_name = html_mod.escape(str(item.get("coin", "")).title())
+
+            weighted_pct = matching_entry.get('weighted_score_percentage', 'N/A') if matching_entry else 'N/A'
+            tp_target = matching_entry.get('take_profit_target_pct', 'N/A') if matching_entry else 'N/A'
+            sl_target = matching_entry.get('stop_loss_target_pct', 'N/A') if matching_entry else 'N/A'
+            rsi_info = html_mod.escape(str(matching_entry.get('rsi_explanation', ''))) if matching_entry else ''
 
             recommendation_items += f"""
             <li style="font-size:14px;line-height:1.6;margin-bottom:10px;background-color:{background_color};padding:10px;border-radius:5px;">
-                <b>{coin_name}</b> - {item.get("reason","")}<br>
-                <strong>Cumulative Score Percentage:</strong> {cumulative_score_percentage}%<br>
+                <b>{coin_name}</b> - {html_mod.escape(str(item.get("reason","")))}<br>
+                <strong>Weighted Score:</strong> {weighted_pct}% &nbsp;|&nbsp;
+                <strong>Equal Score:</strong> {cumulative_score_percentage}%<br>
+                <strong>Exit Targets:</strong> Take Profit: +{tp_target}% &nbsp;|&nbsp; Stop Loss: -{sl_target}%<br>
+                <span style="font-size:12px;color:#666;">{rsi_info}</span><br>
                 <a href="{coin_url}" target="_blank" style="color:#0077cc;text-decoration:none;">More Info</a>
             </li>
             """
@@ -223,6 +249,9 @@ def generate_html_report_with_recommendations(report_entries, digest_summary, gp
                             <td style="padding:20px;">
                                 <h2 style="text-align:center;color:#264653;font-size:24px;margin:0;">Coin Analysis Report</h2>
                             </td>
+                        </tr>
+                        <tr>
+                            <td>{regime_banner}</td>
                         </tr>
                         <tr>
                             <td>
@@ -284,7 +313,7 @@ Your task is to **summarize the data for each coin** using the available metrics
     - 0 = No notable increase in trading activity
     - 1 = A moderate spike in trading volume in one time window
     - 2 = Sustained and strong trading activity over multiple periods
-- **cumulative_score** (out of 22): Combined measure of price, volume, sentiment, news, whale activity, and more.
+- **cumulative_score** (out of 20): Combined measure of price momentum, volume, sentiment, news, and technical indicators.
     - 0–5 = Weak overall signals
     - 6–11 = Moderate momentum or mixed indicators
     - 12+ = Strong breakout potential or sustained multi-signal alignment
@@ -334,16 +363,8 @@ Here is the dataset:
 {dataset_json}
 """
 
-    def api_call():
-        return openai.ChatCompletion.create(
-            model="gpt-4o",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.0
-        )
-
     try:
-        response = call_with_retries(api_call)
-        content = response['choices'][0]['message']['content']
+        content = call_with_retries(lambda: llm_chat_completion(prompt))
 
         match = re.search(r'```json(.*?)```', content, re.DOTALL)
         if match:
@@ -444,29 +465,20 @@ Now, here is the dataset:
 {dataset_json}
 """
 
-    def api_call():
-        return openai.ChatCompletion.create(
-            model="gpt-4o",
-            messages=[{"role": "user", "content": prompt}],
-            n=1,
-            temperature=0.0
-        )
-
     try:
-        response = call_with_retries(api_call)
-        gpt_message_content = response['choices'][0]['message']['content']
+        content = call_with_retries(lambda: llm_chat_completion(prompt))
 
-        json_match = re.search(r'```json(.*?)```', gpt_message_content, re.DOTALL)
+        json_match = re.search(r'```json(.*?)```', content, re.DOTALL)
         if json_match:
             json_content = json_match.group(1).strip()
             parsed_data = json.loads(json_content)
             return parsed_data
 
-        logger.debug("No JSON content found in the GPT response.")
+        logger.debug("No JSON content found in the LLM response.")
         return {"recommendations": []}
 
     except Exception as e:
-        logger.error(f"Failed to complete GPT-4o analysis: {e}")
+        logger.error(f"Failed to complete LLM analysis: {e}")
         logger.debug(traceback.format_exc())
         return {"recommendations": []}
 
@@ -532,7 +544,7 @@ def send_failure_email():
             logger.debug("Connecting to SMTP for failure email…")
             server.starttls()
             server.login(SMTP_USERNAME, SMTP_PASSWORD)
-            recipients = EMAIL_TO.split(",")
+            recipients = [e.strip() for e in EMAIL_TO.split(",")]
             server.sendmail(EMAIL_FROM, recipients, msg.as_string())
         logger.debug("Failure email sent successfully.")
 
@@ -571,17 +583,8 @@ def gpt4o_summarize_digest_and_extract_tickers(digest_text):
     Respond **only** in JSON format with 'surge_summary' and 'tickers' as keys. Ensure the tickers are in alphabetical order and there are no duplicate tickers.
     """
 
-    def api_call():
-        return openai.ChatCompletion.create(
-            model="gpt-4o",
-            messages=[{"role": "user", "content": prompt}],
-            n=1,
-            temperature=0.0
-        )
-
     try:
-        response = call_with_retries(api_call)
-        response_content = response.choices[0].message['content'].strip()
+        response_content = call_with_retries(lambda: llm_chat_completion(prompt)).strip()
         json_match = re.search(r'\{.*\}', response_content, re.DOTALL)
         if json_match:
             json_str = json_match.group(0)
@@ -594,11 +597,19 @@ def gpt4o_summarize_digest_and_extract_tickers(digest_text):
             logger.debug(f"No JSON found in the response: {response_content}")
             return {"surge_summary": [], "tickers": []}
 
-    except openai.error.RateLimitError as e:
-        logger.debug(f"Rate limit reached: {e}. Waiting for 60 seconds before retrying...")
-        time.sleep(60)
-        return gpt4o_summarize_digest_and_extract_tickers(digest_text)
     except Exception as e:
+        if "rate limit" in str(e).lower() or "429" in str(e):
+            logger.warning(f"Rate limit reached: {e}. Waiting 60s before retry...")
+            time.sleep(60)
+            try:
+                retry_content = call_with_retries(lambda: llm_chat_completion(prompt)).strip()
+                json_match = re.search(r'\{.*\}', retry_content, re.DOTALL)
+                if json_match:
+                    return json.loads(json_match.group(0))
+            except Exception as retry_err:
+                logger.error(f"Retry also failed: {retry_err}")
+            return {"surge_summary": [], "tickers": []}
+
         logger.debug(f"An error occurred while summarizing the digest and extracting tickers: {e}")
         logger.debug(traceback.format_exc())
         return {"surge_summary": [], "tickers": []}
@@ -640,7 +651,7 @@ def send_email_with_report(html_content, attachment_path, plot_image_path=os.pat
         msg = MIMEMultipart('related')
         msg['Subject'] = "AI Generated Coin Analysis Report"
         msg['From'] = EMAIL_FROM
-        msg['Bcc'] = EMAIL_TO
+        msg['To'] = EMAIL_TO
 
         part = MIMEText(html_content, 'html')
         msg.attach(part)
@@ -675,7 +686,7 @@ def send_email_with_report(html_content, attachment_path, plot_image_path=os.pat
             with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
                 server.starttls()
                 server.login(SMTP_USERNAME, SMTP_PASSWORD)
-                recipients = EMAIL_TO.split(",")
+                recipients = [e.strip() for e in EMAIL_TO.split(",")]
                 server.sendmail(EMAIL_FROM, recipients, msg.as_string())
             logger.debug("Email sent successfully.")
         except Exception as e:

@@ -1,0 +1,30 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#264653', 'primaryTextColor': '#fff', 'lineColor': '#2a9d8f', 'secondaryColor': '#2a9d8f', 'tertiaryColor': '#e76f51'}}}%%
+
+flowchart LR
+    subgraph S1["STAGE 1: Score All Coins (free)"]
+        A["CoinPaprika\nPrice · Volume · Tickers"] --> B["11 Quantitative\nSignals"]
+        C["Fear & Greed\nIndex"] --> B
+        B --> D["Evidence-Weighted\nScoring"]
+        D --> E{"Filter to\nTop ~20"}
+    end
+
+    subgraph S2["STAGE 2: News (~$0.20)"]
+        E --> F["Google News RSS\n20 headlines/coin"]
+        F --> G["LLM Analysis\nSentiment · Catalysts\nRisk · Velocity"]
+        G --> H["Score\nAdjustment\n±4.0"]
+    end
+
+    subgraph S3["STAGE 3: Report"]
+        H --> I["LLM Commentary\nPer-coin analysis"]
+        I --> J["📧 Email\nMulti-universe tables\nExit targets · Glossary"]
+    end
+
+    subgraph BT["BACKTESTER"]
+        K["4+ Years\nHistorical Data"] --> L["Validate\nSignals"]
+        L -.->|"Weights"| D
+    end
+
+    style S1 fill:#264653,color:#fff
+    style S2 fill:#2a9d8f,color:#fff
+    style S3 fill:#e76f51,color:#fff
+    style BT fill:#f4a261,color:#000

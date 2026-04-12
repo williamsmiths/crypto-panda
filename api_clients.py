@@ -4,7 +4,6 @@
 """
 Crypto data utilities:
 - CoinPaprika (twitter, events, historical OHLCV)
-- Santiment via sanpy (metrics + project slugs)
 - CryptoNews (trending mentions, weekly news, sundown digest)
 - Alternative.me (Fear & Greed)
 
@@ -19,14 +18,10 @@ from __future__ import annotations
 
 import os
 import time
-import math
-import json
 import logging
 import random
 import traceback
 import re
-from dataclasses import dataclass
-from functools import lru_cache
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -37,7 +32,6 @@ from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 
 # Third-party SDKs
-import san  # sanpy
 from coinpaprika import client as Coinpaprika
 
 # ----------------------------
@@ -49,71 +43,25 @@ try:
         BACKOFF_FACTOR,
         MAX_RETRIES,
         COIN_PAPRIKA_API_KEY,
-        SAN_API_KEY,
     )
 except Exception:
     # Sane fallbacks if config object isn’t importable.
     BACKOFF_FACTOR = float(os.getenv("BACKOFF_FACTOR", "2.0"))
     MAX_RETRIES = int(os.getenv("MAX_RETRIES", "5"))
     COIN_PAPRIKA_API_KEY = os.getenv("COIN_PAPRIKA_API_KEY", "")
-    SAN_API_KEY = os.getenv("SAN_API_KEY", "")
 
 CRYPTO_NEWS_API_KEY = os.getenv("CRYPTO_NEWS_API_KEY", "")
-
-# Set Santiment API key (sanpy)
-if SAN_API_KEY:
-    os.environ["SANAPIKEY"] = SAN_API_KEY
-    san.ApiConfig.api_key = SAN_API_KEY
 
 # CoinPaprika client
 _coinpaprika_client = Coinpaprika.Client(api_key=COIN_PAPRIKA_API_KEY) if COIN_PAPRIKA_API_KEY else Coinpaprika.Client()
 
 # ----------------------------
-# Logging (console + single rolling file per script)
+# Logging
 # ----------------------------
 
-def setup_logging(name: str,
-                  log_dir: Union[str, Path] = None,
-                  level: str = None) -> logging.Logger:
-    """
-    Create a logger that writes to console and a single per-script logfile.
-    File path: <log_dir>/<script_stem>.log (overwrites each run)
-    """
-    base_dir = Path(__file__).resolve().parent
-    log_dir = Path(log_dir or (base_dir / "../logs")).resolve()
-    log_dir.mkdir(parents=True, exist_ok=True)
+from logging_config import setup_logging
 
-    log_path = log_dir / f"{Path(__file__).stem}.log"
-
-    level_name = (level or os.getenv("LOG_LEVEL", "INFO")).upper()
-    level_val = getattr(logging, level_name, logging.INFO)
-
-    logger = logging.getLogger(name)
-    logger.setLevel(level_val)
-    logger.propagate = False
-
-    # Prevent duplicate handlers on reload
-    for h in list(logger.handlers):
-        logger.removeHandler(h)
-
-    fmt = "%(asctime)sZ [%(levelname)s] %(name)s | %(message)s"
-    datefmt = "%Y-%m-%dT%H:%M:%S"
-    formatter = logging.Formatter(fmt=fmt, datefmt=datefmt)
-
-    ch = logging.StreamHandler()
-    ch.setLevel(level_val)
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
-
-    fh = logging.FileHandler(str(log_path), mode="w", encoding="utf-8", delay=False)
-    fh.setLevel(level_val)
-    fh.setFormatter(formatter)
-    logger.addHandler(fh)
-
-    logger.info(f"Logging started → {log_path} (level={level_name})")
-    return logger
-
-logger = setup_logging(__name__)
+logger = setup_logging(__name__, caller_file=__file__)
 
 # ----------------------------
 # Helpers: time & session
@@ -208,7 +156,7 @@ def fetch_twitter_data(coin_id: str) -> pd.DataFrame:
     try:
         tweets = call_with_retries(_coinpaprika_client.twitter, coin_id)
     except Exception as e:
-        logger.debug(f"twitter API error for {coin_id}: {e}")
+        logger.warning(f"twitter API error for {coin_id}: {e}")
         return pd.DataFrame()
 
     if not tweets:
@@ -227,61 +175,6 @@ def fetch_twitter_data(coin_id: str) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-def fetch_santiment_metric(metric: str, coin_slug: str, start_date: str, end_date: str) -> Optional[float]:
-    """
-    Fetch a Santiment metric via sanpy.
-    Returns latest 'value' or None if unavailable.
-    """
-    try:
-        logger.debug(f"san.get metric={metric} slug={coin_slug} from={start_date} to={end_date}")
-        result = san.get(metric, slug=coin_slug, from_date=start_date, to_date=end_date)
-        if isinstance(result, pd.DataFrame) and not result.empty and "value" in result.columns:
-            return float(result.iloc[-1]["value"])
-        logger.debug(f"No data for {metric}:{coin_slug}")
-        return None
-    except Exception as e:
-        logger.debug(f"Santiment metric error {metric}:{coin_slug}: {e}")
-        return None
-
-
-def fetch_santiment_data_for_coin(coin_slug: str) -> Dict[str, float]:
-    """
-    Returns a dict of Santiment metrics; defaults to 0.0 on missing/invalid.
-    """
-    now = utcnow()
-    end_date = now.strftime("%Y-%m-%d")
-    start_date = (now - timedelta(days=30)).strftime("%Y-%m-%d")
-
-    def _safe(metric_name: str) -> float:
-        val = fetch_santiment_metric(metric_name, coin_slug, start_date, end_date)
-        try:
-            return float(val) if val is not None and math.isfinite(float(val)) else 0.0
-        except Exception:
-            return 0.0
-
-    try:
-        payload = {
-            "dev_activity_increase": _safe("30d_moving_avg_dev_activity_change_1d"),
-            "daily_active_addresses_increase": _safe("active_addresses_24h_change_30d"),
-            "exchange_inflow_usd": _safe("exchange_inflow_usd"),
-            "exchange_outflow_usd": _safe("exchange_outflow_usd"),
-            "whale_transaction_count_100k_usd_to_inf": _safe("whale_transaction_count_100k_usd_to_inf"),
-            "transaction_volume_usd_change_1d": _safe("transaction_volume_usd_change_1d"),
-            "sentiment_weighted_total": _safe("sentiment_weighted_total_1d"),
-        }
-        return payload
-    except Exception as e:
-        logger.error(f"Santiment bundle fetch failed for {coin_slug}: {e}")
-        return {
-            "dev_activity_increase": 0.0,
-            "daily_active_addresses_increase": 0.0,
-            "exchange_inflow_usd": 0.0,
-            "exchange_outflow_usd": 0.0,
-            "whale_transaction_count_100k_usd_to_inf": 0.0,
-            "transaction_volume_usd_change_1d": 0.0,
-            "sentiment_weighted_total": 0.0,
-        }
-
 
 def get_sundown_digest() -> List[Mapping[str, Any]]:
     """
@@ -295,12 +188,12 @@ def get_sundown_digest() -> List[Mapping[str, Any]]:
     try:
         resp = SESSION.get(url)
         if resp.status_code != 200:
-            logger.debug(f"Sundown digest non-200: {resp.status_code} body={resp.text[:400]}")
+            logger.warning(f"Sundown digest non-200: {resp.status_code} body={resp.text[:400]}")
             return []
         data = resp.json()
         return data.get("data", []) if isinstance(data, dict) else []
     except Exception as e:
-        logger.debug(f"Sundown digest error: {e}")
+        logger.warning(f"Sundown digest error: {e}")
         return []
 
 
@@ -314,27 +207,6 @@ def filter_active_and_ranked_coins(coins: Iterable[Mapping[str, Any]], max_coins
     ]
     return filtered[:max_coins]
 
-
-@lru_cache(maxsize=1)
-def fetch_santiment_slugs() -> pd.DataFrame:
-    """
-    Santiment 'projects/all' slugs. Cached (process-level) until interpreter exits.
-    """
-    try:
-        projects = san.get(
-            "projects/all",
-            interval="1d",
-            columns=["slug", "name", "ticker", "infrastructure", "mainContractAddress"],
-        )
-        df = pd.DataFrame(projects) if not isinstance(projects, pd.DataFrame) else projects.copy()
-        if df.empty:
-            return pd.DataFrame()
-        df["name_normalized"] = df["name"].map(lambda x: re.sub(r"\W+", "", str(x).lower()))
-        logger.info(f"Fetched {len(df)} Santiment slugs")
-        return df
-    except Exception as e:
-        logger.error(f"Error fetching Santiment slugs: {e}")
-        return pd.DataFrame()
 
 
 def fetch_news_for_past_week(tickers: Mapping[str, str]) -> pd.DataFrame:
@@ -362,7 +234,11 @@ def fetch_news_for_past_week(tickers: Mapping[str, str]) -> pd.DataFrame:
                 if resp.status_code != 200:
                     logger.debug(f"News non-200 for {coin_name} ({ticker}) {resp.status_code}: {resp.text[:300]}")
                     continue
-                payload = resp.json()
+                try:
+                    payload = resp.json()
+                except (ValueError, Exception):
+                    logger.warning(f"JSON parse error for news {coin_name}: {resp.text[:200]}")
+                    continue
                 data_list = payload.get("data", []) if isinstance(payload, dict) else []
                 for article in data_list:
                     all_rows.append(
@@ -455,17 +331,19 @@ def fetch_fear_and_greed_index() -> Optional[int]:
     try:
         resp = SESSION.get("https://api.alternative.me/fng/")
         if resp.status_code != 200:
-            logger.debug(f"FNG non-200: {resp.status_code} body={resp.text[:200]}")
+            logger.warning(f"FNG non-200: {resp.status_code} body={resp.text[:200]}")
             return None
         payload = resp.json()
         if not isinstance(payload, dict):
             return None
         data = payload.get("data")
         if isinstance(data, list) and data:
-            return int(data[0].get("value"))
+            val = data[0].get("value")
+            if val is not None:
+                return int(val)
         return None
     except Exception as e:
-        logger.debug(f"FNG fetch error: {e}")
+        logger.warning(f"FNG fetch error: {e}")
         return None
 
 
