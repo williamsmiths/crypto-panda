@@ -13,7 +13,6 @@
     "files": [
       "electron/**/*",
       "*.py",
-      "desktop_ui/**/*",
       "requirements.txt",
       "README.md"
     ],

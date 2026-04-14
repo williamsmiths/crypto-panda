@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Crypto Panda Desktop</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <h1>Crypto Panda</h1>
+          <p>Bang dieu khien van hanh</p>
+        </div>
+        <nav id="tabs">
+          <div class="nav-group-title">Van hanh</div>
+          <button data-tab="dashboard" class="active">
+            <span class="tab-main">Tong quan</span>
+            <span class="tab-sub">Trang thai he thong va job</span>
+          </button>
+          <button data-tab="daily">
+            <span class="tab-main">Quet hang ngay</span>
+            <span class="tab-sub">Daily scanner va log realtime</span>
+          </button>
+          <button data-tab="backtest">
+            <span class="tab-main">Backtest</span>
+            <span class="tab-sub">Kiem dinh tin hieu lich su</span>
+          </button>
+          <button data-tab="monitor">
+            <span class="tab-main">Bao cao tuan</span>
+            <span class="tab-sub">Monitor va report tong hop</span>
+          </button>
+          <button data-tab="results">
+            <span class="tab-main">Ket qua</span>
+            <span class="tab-sub">Artifacts CSV JSON PNG XLSX</span>
+          </button>
+          <button data-tab="history">
+            <span class="tab-main">Lich su job</span>
+            <span class="tab-sub">Lich su chay va error code</span>
+          </button>
+
+          <div class="nav-group-title">He thong</div>
+          <button data-tab="settings">
+            <span class="tab-main">Cau hinh</span>
+            <span class="tab-sub">Quan ly .env va secrets</span>
+          </button>
+          <button data-tab="health">
+            <span class="tab-main">Suc khoe</span>
+            <span class="tab-sub">Kiem tra API DB SMTP</span>
+          </button>
+        </nav>
+      </aside>
+
+      <main>
+        <section class="topbar">
+          <div class="chip" id="chipInterpreter">Interpreter: --</div>
+          <div class="chip" id="chipQueue">Queue: --</div>
+          <div class="chip" id="chipRunning">Running: --</div>
+          <div class="chip" id="chipLastJob">Last Job: --</div>
+        </section>
+
+        <section id="dashboard" class="tab active card">
+          <div class="toolbar">
+            <h2>Tong quan he thong</h2>
+            <button id="refreshDashboard">Refresh</button>
+          </div>
+          <div class="metrics" id="dashboardMetrics">
+            <article class="metric-card">
+              <span class="metric-label">Jobs History</span>
+              <span class="metric-value" id="metricHistoryCount">0</span>
+            </article>
+            <article class="metric-card">
+              <span class="metric-label">Queue Size</span>
+              <span class="metric-value" id="metricQueueSize">0</span>
+            </article>
+            <article class="metric-card">
+              <span class="metric-label">Running Jobs</span>
+              <span class="metric-value" id="metricRunningCount">0</span>
+            </article>
+            <article class="metric-card">
+              <span class="metric-label">Environment</span>
+              <span class="metric-value" id="metricEnvironment">Unknown</span>
+            </article>
+          </div>
+          <pre id="dashboardContent"></pre>
+        </section>
+
+        <section id="daily" class="tab card">
+          <div class="toolbar">
+            <h2>Quet hang ngay</h2>
+          </div>
+          <div class="control-panel">
+            <div class="row">
+              <label>Universe</label>
+              <select id="dailyUniverse">
+                <option>large</option>
+                <option>mid</option>
+                <option selected>small</option>
+                <option>all</option>
+              </select>
+              <label>Top</label>
+              <input id="dailyTop" value="200" />
+              <label>Min Score</label>
+              <input id="dailyMinScore" value="35" />
+              <button id="runDaily">Run</button>
+              <button class="danger" id="stopDaily">Stop</button>
+            </div>
+          </div>
+          <pre id="dailyLog"></pre>
+        </section>
+
+        <section id="backtest" class="tab card">
+          <div class="toolbar">
+            <h2>Backtester</h2>
+          </div>
+          <div class="control-panel">
+            <div class="row">
+              <label>Universe</label>
+              <select id="btUniverse">
+                <option>large</option>
+                <option>mid</option>
+                <option selected>small</option>
+                <option>all</option>
+              </select>
+              <label>Weeks</label>
+              <input id="btWeeks" value="24" />
+              <label>Top</label>
+              <input id="btTop" value="50" />
+              <button id="runBacktest">Run</button>
+              <button class="danger" id="stopBacktest">Stop</button>
+            </div>
+          </div>
+          <pre id="backtestLog"></pre>
+        </section>
+
+        <section id="monitor" class="tab card">
+          <div class="toolbar">
+            <h2>Bao cao tuan</h2>
+          </div>
+          <div class="control-panel">
+            <div class="row">
+              <button id="runMonitor">Run Monitor</button>
+              <button class="danger" id="stopMonitor">Stop</button>
+            </div>
+          </div>
+          <pre id="monitorLog"></pre>
+        </section>
+
+        <section id="settings" class="tab card">
+          <div class="toolbar">
+            <h2>Cau hinh (.env)</h2>
+          </div>
+          <div id="settingsGrid"></div>
+          <div class="row">
+            <button id="reloadEnv">Reload .env</button>
+            <button id="saveEnv">Save .env</button>
+            <button id="saveSecret">Save secret cache</button>
+          </div>
+          <pre id="settingsMsg"></pre>
+        </section>
+
+        <section id="results" class="tab results card">
+          <div class="left">
+            <div class="toolbar compact">
+              <h2>Artifacts ket qua</h2>
+            </div>
+            <button id="refreshArtifacts">Refresh</button>
+            <button id="openArtifact">Open</button>
+            <ul id="artifactList"></ul>
+          </div>
+          <pre id="artifactPreview"></pre>
+        </section>
+
+        <section id="health" class="tab card">
+          <div class="toolbar">
+            <h2>Kiem tra suc khoe</h2>
+          </div>
+          <div class="control-panel">
+            <div class="row">
+              <button id="healthApi">Check API</button>
+              <button id="healthDb">Check DB</button>
+              <button id="healthSmtp">Check SMTP</button>
+            </div>
+          </div>
+          <pre id="healthLog"></pre>
+        </section>
+
+        <section id="history" class="tab card">
+          <div class="toolbar">
+            <h2>Lich su thuc thi</h2>
+            <button id="refreshHistory">Refresh</button>
+          </div>
+          <pre id="historyContent"></pre>
+        </section>
+      </main>
+    </div>
+
+    <script src="./renderer.js"></script>
+  </body>
+  </html>
+
