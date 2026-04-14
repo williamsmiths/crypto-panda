@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [v2.1.0] - 2026-04-11
 
 ### Fixed
+
 - Hardcoded `.env` path (`/home/ec2-user/...`) replaced with dynamic path from `__file__` — now runs on any machine
 - Relative `LOG_DIR`/`DATA_DIR` paths replaced with absolute paths — no more CWD dependency
 - Unsafe `iloc[0]`/`iloc[-1]` on empty DataFrames guarded in `calculate_price_change` and `calculate_volume_change`
@@ -16,14 +17,16 @@ All notable changes to this project will be documented in this file.
 - Inconsistent GPT response access pattern normalized to dict-style across all calls
 
 ### Added
+
 - **RSI indicator** — 14-day Relative Strength Index scoring oversold bounces and momentum with volume confirmation (0-1 points)
 - **Shared logging module** (`logging_config.py`) — replaces 6 identical `setup_logging()` copies across all modules
 - **Startup env var validation** — warns at import time about missing required environment variables
-- **`.env.example`** — documents all required and optional environment variables for easy onboarding
+- `**.env.example`** — documents all required and optional environment variables for easy onboarding
 - **Batch DB writes** (`save_cumulative_scores_batch`) — single `executemany()` call replaces 1000+ individual connections per run
 - **Per-task timeout** — ThreadPoolExecutor uses `submit()` + `as_completed()` with 120s timeout per coin
 
 ### Changed
+
 - **Scoring rebalanced** (max score: 22 -> 21):
   - Santiment surge score capped at 3 (was 6), reducing Santiment weight from 36% to 26%
   - `tweet_score` now continuous 0-1 (scales by tweet count, not binary)

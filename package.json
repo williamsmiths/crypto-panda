@@ -1,0 +1,29 @@
+{
+  "name": "crypto-panda-desktop",
+  "version": "1.0.0",
+  "description": "Electron desktop UI for Crypto-Panda",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-builder --win portable nsis"
+  },
+  "build": {
+    "appId": "com.cryptopanda.desktop",
+    "productName": "Crypto Panda Desktop",
+    "files": [
+      "electron/**/*",
+      "*.py",
+      "desktop_ui/**/*",
+      "requirements.txt",
+      "README.md"
+    ],
+    "directories": {
+      "buildResources": "electron/resources"
+    }
+  },
+  "devDependencies": {
+    "electron": "^37.2.0",
+    "electron-builder": "^26.0.12"
+  }
+}
+

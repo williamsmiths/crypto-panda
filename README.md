@@ -1,272 +1,307 @@
+# Crypto-Panda: Hệ Thống Quét Thị Trường Crypto & Cảnh Báo Tự Động
 
-# Crypto-Panda: Automated Crypto Market Scanner & Alert System
-
-[![GitHub Repo](https://img.shields.io/badge/GitHub-sjmoran%2Fcrypto--panda-blue?logo=github)](https://github.com/sjmoran/crypto-panda)
-[![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC--BY--NC%204.0-orange)](https://creativecommons.org/licenses/by-nc/4.0/)
-[![Python Version](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/Tests-22%20passing-brightgreen)]()
-
-<img src="./images/crypto_panda_trading.png" alt="Crypto Panda Trading" width="50%"/>
+[Kho GitHub](https://github.com/sjmoran/crypto-panda)
+[Giấy phép: CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)
+[Phiên bản Python](https://www.python.org/downloads/)
+[Kiểm thử]()
 
 ---
 
-## What is Crypto-Panda?
+## Crypto-Panda là gì?
 
-An open-source crypto market scanner that scores coins using backtested quantitative signals, applies LLM-powered news analysis on shortlisted coins, and emails you a daily report with AI commentary, exit targets, and catalyst alerts.
+Đây là một công cụ quét thị trường crypto mã nguồn mở: chấm điểm coin bằng các tín hiệu định lượng đã backtest, phân tích tin tức bằng LLM cho danh sách coin đã lọc, sau đó gửi email báo cáo hằng ngày với nhận định AI, mức chốt lời và cảnh báo catalyst.
 
-Built with a two-stage architecture that keeps costs low (~$100/mo) by running expensive operations only on pre-qualified coins.
-
----
-
-## Features
-
-| Feature | Description |
-|---|---|
-| **Two-Stage Scoring** | Stage 1: quantitative signals on all coins (free). Stage 2: LLM news analysis on shortlist only (~$0.20/run) |
-| **Multi-Universe** | Separate analysis and weights for large-cap (1-50), mid-cap (51-200), and small-cap (201-1000) |
-| **Evidence-Weighted** | Signal weights derived from 5,600+ backtesting observations, not guesswork |
-| **LLM News Analytics** | Crypto-aware sentiment, catalyst detection (exchange listings, hacks, lawsuits), risk identification |
-| **News Velocity** | Detects when a coin is getting unusual attention (article count as proxy) |
-| **Exit Targets** | Per-coin take-profit and trailing stop-loss, volatility-scaled |
-| **Market Regime** | Bull/bear/sideways detection via BTC 50/200 MA crossover |
-| **AI Commentary** | LLM generates per-coin analysis (OpenAI, Anthropic, Ollama, or any compatible endpoint) |
-| **Backtester** | 4+ years of validation data with volatility-adjusted surge detection and exit strategy simulation |
-| **News Persistence** | Daily news sentiment saved to Aurora PostgreSQL for future backtesting |
+Hệ thống được xây theo kiến trúc 2 giai đoạn để giảm chi phí (~$100/tháng), bằng cách chỉ chạy các tác vụ tốn tiền trên những coin đã được tiền sàng lọc.
 
 ---
 
-## Quickstart
+## Tính năng
+
+
+| Tính năng                    | Mô tả                                                                                                                                     |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| **Chấm Điểm 2 Giai Đoạn**    | Giai đoạn 1: tín hiệu định lượng cho toàn bộ coin (miễn phí). Giai đoạn 2: phân tích tin tức bằng LLM chỉ cho shortlist (~$0.20/lần chạy) |
+| **Đa Vũ Trụ Coin**           | Phân tích và trọng số tách riêng cho large-cap (1-50), mid-cap (51-200), small-cap (201-1000)                                             |
+| **Trọng Số Theo Bằng Chứng** | Trọng số tín hiệu được rút ra từ hơn 5,600 quan sát backtest, không dựa trên phỏng đoán                                                   |
+| **Phân Tích Tin Tức LLM**    | Phân tích sentiment hiểu ngữ cảnh crypto, phát hiện catalyst (list sàn, hack, kiện tụng), nhận diện rủi ro                                |
+| **Tốc Độ Tin Tức**           | Phát hiện coin đang được chú ý bất thường (dùng số lượng bài báo làm chỉ báo)                                                             |
+| **Mức Thoát Lệnh**           | Take-profit và trailing stop-loss theo từng coin, có scale theo biến động                                                                 |
+| **Chế Độ Thị Trường**        | Phát hiện bull/bear/sideways bằng giao cắt MA 50/200 của BTC                                                                              |
+| **Bình Luận AI**             | LLM tạo phân tích theo từng coin (OpenAI, Anthropic, Ollama, hoặc endpoint tương thích)                                                   |
+| **Backtester**               | Hơn 4 năm dữ liệu kiểm định với mô phỏng phát hiện tăng tốc đã điều chỉnh theo biến động và chiến lược thoát lệnh                         |
+| **Lưu Trữ Tin Tức**          | Sentiment tin tức hằng ngày được lưu vào Aurora PostgreSQL để backtest về sau                                                             |
+
+
+---
+
+## Bắt đầu nhanh
 
 ```bash
 git clone https://github.com/sjmoran/crypto-panda.git
 cd crypto-panda
 pip install -r requirements.txt
-cp .env.example .env   # Fill in API keys
+cp .env.example .env   # Điền API key
 
-# Daily scan — all cap sizes
+# Quét hằng ngày — toàn bộ nhóm vốn hóa
 python daily_scanner.py --universe all --top-coins 200 --min-weighted-score 35
 
-# Weekly full report
+# Báo cáo đầy đủ hằng tuần
 python monitor.py
 
 # Backtest
 python backtester.py --universe small --weeks 100 --top-coins 50
 ```
 
+## Desktop UI (Electron)
+
+Giao diện desktop viết bằng Electron để vận hành Daily/Backtest/Monitor, quản lý `.env`, xem log/artifact, health check và lịch sử job.
+
+Chạy app:
+
+```bash
+npm install
+npm start
+```
+
+Build bản Windows:
+
+```bash
+npm run build:win
+```
+
 ---
 
-## Running Modes
+## Các chế độ chạy
 
-| Mode | Command | What it does | Frequency |
-|---|---|---|---|
-| **Daily scanner** | `python daily_scanner.py --universe all` | Multi-universe scan with LLM news analysis | Daily via cron |
-| **Small-cap focus** | `python daily_scanner.py --universe small` | Rank 201-1000 only | Daily |
-| **Weekly report** | `python monitor.py` | Full analysis + LLM report + Excel | Weekly |
-| **Backtester** | `python backtester.py --universe small --weeks 100` | Validate signals against history | Ad-hoc |
-| **Test email** | `python send_test_email.py` | Sample report with mock data | Ad-hoc |
+
+| Chế độ                  | Lệnh                                                | Chức năng                                   | Tần suất           |
+| ----------------------- | --------------------------------------------------- | ------------------------------------------- | ------------------ |
+| **Quét hằng ngày**      | `python daily_scanner.py --universe all`            | Quét đa vũ trụ + phân tích tin tức bằng LLM | Hằng ngày qua cron |
+| **Tập trung small-cap** | `python daily_scanner.py --universe small`          | Xếp hạng riêng nhóm 201-1000                | Hằng ngày          |
+| **Báo cáo tuần**        | `python monitor.py`                                 | Phân tích đầy đủ + báo cáo LLM + Excel      | Hằng tuần          |
+| **Backtester**          | `python backtester.py --universe small --weeks 100` | Kiểm định tín hiệu trên dữ liệu lịch sử     | Theo nhu cầu       |
+| **Email test**          | `python send_test_email.py`                         | Báo cáo mẫu bằng dữ liệu mock               | Theo nhu cầu       |
+
 
 ---
 
-## Two-Stage Architecture
+## Kiến trúc 2 giai đoạn
 
 ```
-Stage 1: Score ALL 200+ coins (free quantitative signals)
-  ├── CoinPaprika bulk ticker (1 API call for all coins)
-  ├── CoinPaprika historical per coin (~200 calls)
+Giai đoạn 1: Chấm điểm TOÀN BỘ 200+ coin (tín hiệu định lượng miễn phí)
+  ├── CoinPaprika bulk ticker (1 API call cho toàn bộ coin)
+  ├── CoinPaprika dữ liệu lịch sử theo từng coin (~200 calls)
   ├── Fear & Greed Index (1 call)
-  ├── 11 signals: price, volume, RSI, growth, FNG, ticker features
-  ├── 0 news calls, 0 LLM calls
-  └── Output: ranked list → filter to top ~20
+  ├── 11 tín hiệu: giá, khối lượng, RSI, tăng trưởng, FNG, đặc trưng ticker
+  ├── 0 lần gọi news, 0 lần gọi LLM
+  └── Đầu ra: danh sách xếp hạng → lọc top ~20
 
-Stage 2: LLM News Analysis for TOP ~20 only
-  ├── Google News RSS per coin (~20 fetches, free)
-  ├── LLM analysis (~$0.01/coin):
-  │   ├── Crypto-aware sentiment (-1.0 to +1.0)
-  │   ├── Catalyst detection (exchange_listing, hack, lawsuit, etc.)
-  │   ├── 1-sentence summary + key risk
-  │   └── Confidence score
-  ├── News velocity (article count as attention signal)
-  ├── Score adjustment: (sentiment × 2 × confidence) + catalyst_bonus + velocity_bonus
-  └── Fallback: VADER if LLM unavailable
+Giai đoạn 2: Phân tích tin tức bằng LLM chỉ cho TOP ~20
+  ├── Google News RSS theo từng coin (~20 lần fetch, miễn phí)
+  ├── Phân tích LLM (~$0.01/coin):
+  │   ├── Sentiment theo ngữ cảnh crypto (-1.0 đến +1.0)
+  │   ├── Phát hiện catalyst (exchange_listing, hack, lawsuit, ...)
+  │   ├── Tóm tắt 1 câu + rủi ro chính
+  │   └── Điểm độ tin cậy
+  ├── News velocity (số lượng bài báo làm tín hiệu mức độ chú ý)
+  ├── Điều chỉnh điểm: (sentiment × 2 × confidence) + catalyst_bonus + velocity_bonus
+  └── Fallback: dùng VADER nếu LLM không khả dụng
 
-Stage 3: AI Commentary + Email (~1 LLM call)
+Giai đoạn 3: Bình luận AI + Gửi email (~1 lần gọi LLM)
 ```
 
-**Principle:** Expensive operations only run on pre-qualified coins.
+**Nguyên tắc:** Tác vụ tốn kém chỉ chạy trên coin đã được sàng lọc trước.
 
 ---
 
-## Scoring System
+## Hệ thống chấm điểm
 
-### Stage 1: Quantitative Signals (16-point scale)
+### Giai đoạn 1: Tín hiệu định lượng (thang 16 điểm)
 
-11 signals scored from price/volume/ticker data. Weights differ per universe based on backtesting.
+11 tín hiệu được chấm điểm từ dữ liệu giá/khối lượng/ticker. Trọng số thay đổi theo từng universe dựa trên backtest.
 
-| Category | Signal | Range | Large-Cap Weight | Small-Cap Weight | Backtested? |
-|---|---|---|---|---|---|
-| Price | Price Change Score | 0-3 | -1.0 (contrarian) | +1.5 (momentum) | Yes |
-| Price | Consistent Weekly Growth | 0-1 | +1.0 | **+3.0** (best signal) | Yes |
-| Price | Consistent Monthly Growth | 0-1 | **+3.0** (best signal) | +0.5 | Yes |
-| Price | Trend Conflict | 0-2 | +1.5 | -1.0 (harmful) | Yes |
-| Volume | Volume Change Score | 0-3 | +1.5 | +1.5 | Yes |
-| Volume | Sustained Volume Growth | 0-1 | +0.5 | +1.0 | Yes |
-| Technical | RSI Score | 0-1 | **+3.0** | +0.5 | Yes |
-| Market | Fear & Greed | 0-1 | +1.0 | +0.5 | No |
-| Ticker | Volume Spike 24h | 0-1 | +1.0 | +3.0 | No (live only) |
-| Ticker | Distance from ATH | 0-1 | +0.5 | +2.0 | No (live only) |
-| Ticker | Multi-TF Momentum | 0-1 | -0.5 (contrarian) | +1.5 | No (live only) |
 
-**Key finding:** Signals behave OPPOSITE between large and small caps. Momentum chasing hurts large caps but helps small caps. RSI oversold bounces are strong for large caps but weak for small caps.
+| Nhóm       | Tín hiệu                        | Khoảng | Trọng số Large-Cap  | Trọng số Small-Cap  | Đã backtest?     |
+| ---------- | ------------------------------- | ------ | ------------------- | ------------------- | ---------------- |
+| Giá        | Điểm biến động giá              | 0-3    | -1.0 (nghịch chiều) | +1.5 (momentum)     | Có               |
+| Giá        | Tăng trưởng tuần ổn định        | 0-1    | +1.0                | **+3.0** (tốt nhất) | Có               |
+| Giá        | Tăng trưởng tháng ổn định       | 0-1    | **+3.0** (tốt nhất) | +0.5                | Có               |
+| Giá        | Xung đột xu hướng               | 0-2    | +1.5                | -1.0 (bất lợi)      | Có               |
+| Khối lượng | Điểm biến động khối lượng       | 0-3    | +1.5                | +1.5                | Có               |
+| Khối lượng | Tăng trưởng khối lượng bền vững | 0-1    | +0.5                | +1.0                | Có               |
+| Kỹ thuật   | Điểm RSI                        | 0-1    | **+3.0**            | +0.5                | Có               |
+| Thị trường | Fear & Greed                    | 0-1    | +1.0                | +0.5                | Không            |
+| Ticker     | Spike khối lượng 24h            | 0-1    | +1.0                | +3.0                | Không (chỉ live) |
+| Ticker     | Khoảng cách tới ATH             | 0-1    | +0.5                | +2.0                | Không (chỉ live) |
+| Ticker     | Momentum đa khung thời gian     | 0-1    | -0.5 (nghịch chiều) | +1.5                | Không (chỉ live) |
 
-### Stage 2: News Confirmation (LLM-powered)
 
-Applied only to shortlisted coins. Adjusts weighted score by up to ±4.0.
+**Phát hiện chính:** Tín hiệu cho large-cap và small-cap cho kết quả NGƯỢC NHAU. Bám momentum gây hại ở large-cap nhưng có lợi ở small-cap. Nhịp bật RSI vùng quá bán mạnh với large-cap nhưng yếu với small-cap.
 
-| Component | What it does | Adjustment |
-|---|---|---|
-| **LLM Sentiment** | Crypto-aware analysis of 20 Google News headlines | sentiment × 2.0 × confidence |
-| **Catalyst Detection** | Exchange listing (+1.5), partnership (+0.5), hack (-2.0), lawsuit (-1.5), regulatory (-1.0) | Per catalyst |
-| **News Velocity** | 15+ articles = high attention (+0.5), 8+ = medium (+0.2) | Bonus |
-| **Fallback** | VADER sentiment if LLM unavailable | sentiment × 2.0 |
+### Giai đoạn 2: Xác nhận tin tức (dùng LLM)
 
----
+Chỉ áp dụng cho coin trong shortlist. Điều chỉnh weighted score tối đa ±4.0.
 
-## Backtesting Results
 
-### Large-Cap (4-Year: May 2022 - Sep 2024, 22 coins, 2,518 observations)
+| Thành phần             | Chức năng                                                                               | Mức điều chỉnh               |
+| ---------------------- | --------------------------------------------------------------------------------------- | ---------------------------- |
+| **LLM Sentiment**      | Phân tích 20 tiêu đề Google News với ngữ cảnh crypto                                    | sentiment × 2.0 × confidence |
+| **Phát hiện Catalyst** | List sàn (+1.5), hợp tác (+0.5), hack (-2.0), kiện tụng (-1.5), quy định pháp lý (-1.0) | Theo từng catalyst           |
+| **News Velocity**      | 15+ bài = chú ý cao (+0.5), 8+ bài = mức trung bình (+0.2)                              | Bonus                        |
+| **Fallback**           | Dùng sentiment từ VADER khi LLM không khả dụng                                          | sentiment × 2.0              |
 
-| Metric | Equal-Weighted | Evidence-Weighted |
-|---|---|---|
-| 7d correlation | 0.021 | **0.054** (2.6x better) |
-| 7d top 20% return | +1.15%/week | **+1.99%/week** |
-| 30d top 20% return | +3.25%/month | **+4.29%/month** |
-
-**Best signals:** Monthly growth (+1.20%), Trend conflict (+1.52%), RSI (+0.89%).
-
-### Small-Cap (2-Year: Apr 2024 - Mar 2026, 50 coins, 3,140 observations)
-
-| Metric | Result |
-|---|---|
-| 7d score correlation | **0.068** (strongest of any universe) |
-| Top 20% vs bottom 20% spread | **+2.77%/week** |
-| 30d avg peak return | **+18.40%** (but endpoint only -0.21%) |
-| Best exit strategy | **Trailing stop (+1.11%)** — only profitable strategy |
-
-**Best signals:** Weekly growth (+2.31%), Volume (+0.81%), Price momentum (+0.68%).
-
-### Bear Market (Oct 2025 - Mar 2026, 584 observations)
-
-| Metric | Result |
-|---|---|
-| Weighted top 20% + combined exit | **+3.48%** |
-| Weighted bottom 20% | **-6.02%** |
-| Spread | **+9.50%** |
-
-### Key Takeaways
-
-1. **Evidence-weighted scoring works** — beats equal-weighted across 4 years
-2. **Signals behave opposite between cap sizes** — one set of weights does NOT fit all
-3. **Exit timing matters more than entry** — 10-18% of returns left on table without stops
-4. **Most signals are noise** — only 3-4 of 11 consistently correlate with returns
-5. **Simplicity wins** — removing Santiment, keywords, tweets improved performance
 
 ---
 
-## Cost Philosophy
+## Kết quả backtest
 
-Started at $170/mo in v1. Now $100/mo with better results. Every dependency was earned or removed.
+### Large-Cap (4 năm: May 2022 - Sep 2024, 22 coin, 2,518 quan sát)
 
-**Removed (no measurable value in backtesting):**
-- Santiment API ($100/mo) — on-chain metrics showed zero correlation
-- CryptoNews API ($0-30/mo) — replaced with free Google News RSS
-- Tweet score — just counted tweets, no quality signal
-- Surge keyword matching — fuzzy matching, high false positives
-- Digest score — binary presence detection
-- Event score — just "event exists"
 
-**What remains:**
+| Chỉ số                | Equal-Weighted | Evidence-Weighted        |
+| --------------------- | -------------- | ------------------------ |
+| Tương quan 7d         | 0.021          | **0.054** (tốt hơn 2.6x) |
+| Lợi nhuận top 20% 7d  | +1.15%/tuần    | **+1.99%/tuần**          |
+| Lợi nhuận top 20% 30d | +3.25%/tháng   | **+4.29%/tháng**         |
 
-| Source | Cost | Why it earned its place |
-|---|---|---|
-| CoinPaprika Starter | $99/mo | 5yr history, real-time tickers. Powers all backtestable signals. |
-| Google News RSS | Free | 20 headlines/coin. Stage 2 only (~20 queries/run). |
-| Alternative.me | Free | Fear & Greed Index (1 call/run). |
-| CoinGecko | Free | Fallback if no CoinPaprika key. |
-| VADER | Free (local) | Fallback if LLM unavailable. |
-| LLM | ~$1-3/run | News analysis + commentary. Or $0 with local Ollama. |
-| Brevo SMTP | Free | 300 emails/day. |
-| **Total** | **~$100/mo** | |
+
+**Tín hiệu tốt nhất:** Tăng trưởng tháng (+1.20%), xung đột xu hướng (+1.52%), RSI (+0.89%).
+
+### Small-Cap (2 năm: Apr 2024 - Mar 2026, 50 coin, 3,140 quan sát)
+
+
+| Chỉ số                           | Kết quả                                                 |
+| -------------------------------- | ------------------------------------------------------- |
+| Tương quan điểm số 7d            | **0.068** (mạnh nhất trong các universe)                |
+| Chênh lệch top 20% vs bottom 20% | **+2.77%/tuần**                                         |
+| Lợi nhuận đỉnh trung bình 30d    | **+18.40%** (nhưng điểm cuối chỉ -0.21%)                |
+| Chiến lược thoát tốt nhất        | **Trailing stop (+1.11%)** — chiến lược duy nhất có lãi |
+
+
+**Tín hiệu tốt nhất:** Tăng trưởng tuần (+2.31%), khối lượng (+0.81%), momentum giá (+0.68%).
+
+### Thị trường giảm (Oct 2025 - Mar 2026, 584 quan sát)
+
+
+| Chỉ số                                | Kết quả    |
+| ------------------------------------- | ---------- |
+| Top 20% weighted + thoát lệnh kết hợp | **+3.48%** |
+| Bottom 20% weighted                   | **-6.02%** |
+| Độ chênh (spread)                     | **+9.50%** |
+
+
+### Điểm rút ra chính
+
+1. **Chấm điểm theo bằng chứng có hiệu quả** — vượt equal-weighted trong 4 năm
+2. **Tín hiệu đảo chiều theo nhóm vốn hóa** — một bộ trọng số KHÔNG dùng chung cho tất cả
+3. **Timing thoát lệnh quan trọng hơn vào lệnh** — thiếu stop-loss có thể bỏ lỡ 10-18% lợi nhuận
+4. **Phần lớn tín hiệu là nhiễu** — chỉ 3-4/11 tín hiệu tương quan ổn định với lợi nhuận
+5. **Đơn giản hiệu quả hơn** — bỏ Santiment, keyword, tweet giúp cải thiện hiệu năng
 
 ---
 
-## Architecture
+## Triết lý chi phí
+
+Bản v1 tiêu tốn $170/tháng. Hiện còn ~$100/tháng nhưng kết quả tốt hơn. Mỗi dependency đều phải chứng minh giá trị, nếu không sẽ bị loại bỏ.
+
+**Đã loại bỏ (không có giá trị đo được trong backtest):**
+
+- Santiment API ($100/tháng) — chỉ số on-chain không có tương quan
+- CryptoNews API ($0-30/tháng) — thay bằng Google News RSS miễn phí
+- Điểm tweet — chỉ đếm số lượng tweet, không phản ánh chất lượng
+- Khớp từ khóa surge — fuzzy matching, nhiều false positive
+- Digest score — chỉ phát hiện có/không
+- Event score — chỉ kiểm tra "có sự kiện"
+
+**Những gì còn lại:**
+
+
+| Nguồn               | Chi phí          | Lý do giữ lại                                                                      |
+| ------------------- | ---------------- | ---------------------------------------------------------------------------------- |
+| CoinPaprika Starter | $99/tháng        | 5 năm lịch sử + ticker realtime. Cấp dữ liệu cho toàn bộ tín hiệu có thể backtest. |
+| Google News RSS     | Miễn phí         | 20 tiêu đề/coin. Chỉ dùng ở giai đoạn 2 (~20 truy vấn/lần chạy).                   |
+| Alternative.me      | Miễn phí         | Fear & Greed Index (1 call/lần chạy).                                              |
+| CoinGecko           | Miễn phí         | Fallback khi không có key CoinPaprika.                                             |
+| VADER               | Miễn phí (local) | Fallback khi LLM không khả dụng.                                                   |
+| LLM                 | ~$1-3/lần chạy   | Phân tích tin tức + bình luận. Hoặc $0 nếu dùng Ollama local.                      |
+| Brevo SMTP          | Miễn phí         | 300 email/ngày.                                                                    |
+| **Tổng**            | **~$100/tháng**  |                                                                                    |
+
+
+---
+
+## Kiến trúc
 
 ```
-daily_scanner.py          # Daily: two-stage scan, LLM news, email
-monitor.py                # Weekly: full analysis, LLM report, Excel
-backtester.py             # Validate signals against 4+ years of data
+daily_scanner.py          # Hằng ngày: quét 2 giai đoạn, tin tức LLM, gửi email
+monitor.py                # Hằng tuần: phân tích đầy đủ, báo cáo LLM, Excel
+backtester.py             # Kiểm định tín hiệu trên hơn 4 năm dữ liệu
 
-coin_analysis.py          # Scoring engine + LLM news analysis + Google News
-coin_universe.py          # Per-universe weights, exit targets, rank ranges
-features.py               # Volume spike, ATH distance, MTF momentum
+coin_analysis.py          # Engine chấm điểm + phân tích tin tức LLM + Google News
+coin_universe.py          # Trọng số theo từng universe, mục tiêu thoát, dải xếp hạng
+features.py               # Spike khối lượng, khoảng cách ATH, momentum đa khung
 api_clients.py            # CoinPaprika, Fear & Greed
-report_generation.py      # LLM abstraction, HTML email, Excel
-data_management.py        # Aurora PostgreSQL + news sentiment persistence
-config.py                 # Configuration
-logging_config.py         # Shared logging
-plotting.py               # Charts
-send_test_email.py        # Test with mock data
+report_generation.py      # Trừu tượng LLM, email HTML, Excel
+data_management.py        # Aurora PostgreSQL + lưu sentiment tin tức
+config.py                 # Cấu hình
+logging_config.py         # Logging dùng chung
+plotting.py               # Biểu đồ
+send_test_email.py        # Test với dữ liệu mock
 ```
 
-**14 modules, ~5,200 lines, 22 unit tests.**
+**14 module, ~5,200 dòng, 22 bài test unit.**
 
 ---
 
-## Environment Variables
+## Biến môi trường
 
-See [`.env.example`](.env.example). Key ones:
+Xem `[.env.example](.env.example)`. Các biến chính:
 
-| Variable | Required | Description |
-|---|---|---|
-| `COIN_PAPRIKA_API_KEY` | Yes | CoinPaprika Pro ($99/mo) |
-| `OPENAI_API_KEY` | For LLM features | Or set `LLM_PROVIDER` for alternatives |
-| `LLM_PROVIDER` | No | `openai` (default), `anthropic`, `ollama` |
-| `LLM_MODEL` | No | Default: `gpt-4.1` |
-| `LLM_BASE_URL` | No | Custom endpoint for Ollama, vLLM |
-| `EMAIL_FROM` | Yes | Verified sender address |
-| `EMAIL_TO` | Yes | Recipient(s) |
-| `SMTP_SERVER` | Yes | e.g. `smtp-relay.brevo.com` |
-| `SMTP_USERNAME` / `SMTP_PASSWORD` | Yes | SMTP credentials |
+
+| Biến                              | Bắt buộc          | Mô tả                                         |
+| --------------------------------- | ----------------- | --------------------------------------------- |
+| `COIN_PAPRIKA_API_KEY`            | Có                | CoinPaprika Pro ($99/tháng)                   |
+| `OPENAI_API_KEY`                  | Cho tính năng LLM | Hoặc đặt `LLM_PROVIDER` để dùng provider khác |
+| `LLM_PROVIDER`                    | Không             | `openai` (mặc định), `anthropic`, `ollama`    |
+| `LLM_MODEL`                       | Không             | Mặc định: `gpt-4.1`                           |
+| `LLM_BASE_URL`                    | Không             | Endpoint tùy chỉnh cho Ollama, vLLM           |
+| `EMAIL_FROM`                      | Có                | Địa chỉ gửi đã xác thực                       |
+| `EMAIL_TO`                        | Có                | Người nhận                                    |
+| `SMTP_SERVER`                     | Có                | Ví dụ `smtp-relay.brevo.com`                  |
+| `SMTP_USERNAME` / `SMTP_PASSWORD` | Có                | Thông tin xác thực SMTP                       |
+
 
 ---
 
-## Disclaimer
+## Miễn trừ trách nhiệm
 
-> **THIS SOFTWARE IS NOT FINANCIAL ADVICE AND SHOULD NOT BE RELIED UPON FOR INVESTMENT DECISIONS.**
+> **PHẦN MỀM NÀY KHÔNG PHẢI LỜI KHUYÊN TÀI CHÍNH VÀ KHÔNG NÊN ĐƯỢC DÙNG LÀM CƠ SỞ CHO QUYẾT ĐỊNH ĐẦU TƯ.**
 >
-> Crypto-Panda is an **educational and research tool only**. The scoring system, backtesting results, and AI-generated outputs are provided for informational purposes only. The author is not a licensed financial adviser.
+> Crypto-Panda chỉ là **công cụ phục vụ mục đích học tập và nghiên cứu**. Hệ thống chấm điểm, kết quả backtest và các đầu ra do AI tạo ra chỉ nhằm cung cấp thông tin tham khảo. Tác giả không phải cố vấn tài chính được cấp phép.
 >
-> **Key risks:**
-> - Backtesting does not guarantee future results. Correlations are weak (0.02-0.07) and may not persist.
-> - Cryptocurrency markets are extremely volatile. You can lose all of your investment.
-> - Small-cap coins carry additional risks: low liquidity, manipulation, rug pulls, total loss.
-> - LLM-generated analysis may contain errors or hallucinations.
-> - No warranty is provided. Software is "as is."
+> **Rủi ro chính:**
 >
-> You are solely responsible for your own decisions. Always DYOR and consult a qualified financial adviser. Never invest money you cannot afford to lose.
+> - Backtest không đảm bảo kết quả tương lai. Tương quan còn yếu (0.02-0.07) và có thể không duy trì.
+> - Thị trường crypto biến động cực mạnh. Bạn có thể mất toàn bộ vốn đầu tư.
+> - Coin small-cap có thêm rủi ro: thanh khoản thấp, thao túng giá, rug pull, mất trắng.
+> - Phân tích do LLM tạo có thể chứa lỗi hoặc hallucination.
+> - Phần mềm không kèm bảo hành và được cung cấp theo trạng thái "as is".
+>
+> Bạn hoàn toàn tự chịu trách nhiệm cho quyết định của mình. Luôn DYOR và tham khảo cố vấn tài chính có chuyên môn. Không đầu tư số tiền bạn không thể chấp nhận mất.
 
 ---
 
-## License
+## Giấy phép
 
-Licensed under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/). See [LICENSE](LICENSE).
+Dự án được cấp phép theo [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/). Xem thêm tại [LICENSE](LICENSE).
 
 ---
 
-## Acknowledgments
+## Lời cảm ơn
 
 - [CoinPaprika API](https://api.coinpaprika.com/)
 - [CoinGecko API](https://www.coingecko.com/en/api)
 - [Google News RSS](https://news.google.com/)
 - [Fear and Greed Index](https://alternative.me/crypto/fear-and-greed-index/)
 - [OpenAI](https://openai.com/) / [Anthropic](https://anthropic.com/)
+

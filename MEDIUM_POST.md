@@ -28,7 +28,7 @@ The result was CryptoPanda — named for its reliance on the Pandas library for 
 
 The primary output is a daily HTML email report designed for rapid analytical review:
 
-![Example report](./images/example_report.png)
+Example report
 *Figure 1: A CryptoPanda daily report showing model-generated signal classifications, exit scenarios, and market regime context. Source: Image by author.*
 
 Each coin in the report is accompanied by an LLM-generated commentary — classifying the coin as higher-conviction, neutral, or lower-conviction — along with a natural language summary of the underlying signals. The LLM considers the coin's RSI, growth consistency, volume dynamics, distance from all-time high, and composite score to produce its assessment. The LLM layer is provider-agnostic, supporting OpenAI, Anthropic Claude, Ollama (for fully local inference), or any OpenAI-compatible endpoint.
@@ -45,7 +45,7 @@ The tool generates analytical outputs. Any decision to act on those outputs — 
 
 The two-stage design is central to how CryptoPanda manages cost and analytical quality:
 
-![CryptoPanda Architecture](./images/architecture.png)
+CryptoPanda Architecture
 *Figure 2: CryptoPanda's two-stage architecture. Stage 1 scores all coins using free quantitative signals. Stage 2 applies LLM-powered news analysis only to the top ~20 shortlisted coins. The backtester validates signal weights against 4+ years of historical data. Source: Image by author.*
 
 The pipeline is organised into the following modules, each with a clear separation of concerns:
@@ -118,25 +118,15 @@ CryptoPanda began with five threshold-based classifiers, each weighted equally. 
 ### Stage 1: The 11 Quantitative Signals
 
 1. **Price Change Score (0–3):** EMA-smoothed price momentum across short, medium, and long-term windows. Market-cap and volatility-adjusted thresholds.
-
 2. **Volume Change Score (0–3):** Volume dynamics across the same three windows with analogous threshold adjustment.
-
 3. **Consistent Weekly Growth (0–1):** Binary indicator: positive price movement on 4+ of the last 7 days. Backtesting identified this as **the signal most strongly correlated with subsequent small-cap returns** (+2.31% average weekly lift in the sample period).
-
 4. **Consistent Monthly Growth (0–1):** 18+ up-days in a 30-day window. **The strongest signal for large-cap returns in backtesting** (+1.20% average weekly lift).
-
 5. **Sustained Volume Growth (0–1):** Volume increased on 4+ of the last 7 days.
-
 6. **Trend Conflict (0–2):** Fires when a monthly uptrend exists without weekly confirmation. This pattern may signal accumulation. It exhibited the most dramatic universe divergence in backtesting: +1.52% lift on large caps, -1.31% on small caps.
-
 7. **RSI Score (0–1):** 14-day Relative Strength Index. Scores when RSI < 30 (oversold) or RSI > 70 with volume confirmation. Showed consistent correlation over 4 years on large caps (+0.89% lift).
-
 8. **Fear & Greed (0–1):** Continuous scale from the Alternative.me index, capturing market-wide sentiment from extreme fear (0) to extreme greed (100).
-
 9. **Volume Spike 24h (0–1):** Real-time 24-hour volume change from the CoinPaprika ticker. A +100% spike scores 1.0, +50% scores 0.7, +20% scores 0.4.
-
 10. **Distance from ATH (0–1):** How far the current price sits below the coin's all-time high. The scoring assigns highest weight to the -50% to -85% range: deep enough to represent a genuine discount, not so deep as to suggest an abandoned project.
-
 11. **Multi-Timeframe Momentum (0–1):** Alignment of price changes across 1-hour, 6-hour, 24-hour, and 7-day windows. All four positive = 1.0 (strong aligned momentum).
 
 ### Stage 2: LLM-Powered News Analysis (shortlisted coins only)
@@ -164,23 +154,27 @@ The original system summed all signals equally. After backtesting across 2,518 l
 
 **Large-Cap Weights (backtesting suggested a contrarian tilt):**
 
-| Signal | Backtested Lift | Assigned Weight |
-|---|---|---|
-| RSI (oversold) | +0.89% | **3.0** |
-| Monthly Growth | +1.20% | **3.0** |
-| Volume Change | -0.52% | +1.5 (reduced) |
-| Trend Conflict | +1.52% | +1.5 |
-| Price Change | -0.34% | **-1.0** (inverted) |
+
+| Signal         | Backtested Lift | Assigned Weight     |
+| -------------- | --------------- | ------------------- |
+| RSI (oversold) | +0.89%          | **3.0**             |
+| Monthly Growth | +1.20%          | **3.0**             |
+| Volume Change  | -0.52%          | +1.5 (reduced)      |
+| Trend Conflict | +1.52%          | +1.5                |
+| Price Change   | -0.34%          | **-1.0** (inverted) |
+
 
 **Small-Cap Weights (backtesting suggested a momentum tilt):**
 
-| Signal | Backtested Lift | Assigned Weight |
-|---|---|---|
-| Weekly Growth | +2.31% | **3.0** |
-| Volume Change | +0.81% | +1.5 |
-| Price Change | +0.68% | **+1.5** (positive) |
-| Trend Conflict | -1.31% | **-1.0** (inverted) |
-| RSI | +0.22% | +0.5 (reduced) |
+
+| Signal         | Backtested Lift | Assigned Weight     |
+| -------------- | --------------- | ------------------- |
+| Weekly Growth  | +2.31%          | **3.0**             |
+| Volume Change  | +0.81%          | +1.5                |
+| Price Change   | +0.68%          | **+1.5** (positive) |
+| Trend Conflict | -1.31%          | **-1.0** (inverted) |
+| RSI            | +0.22%          | +0.5 (reduced)      |
+
 
 The negative weight on Price Change for large caps reflects a mean-reversion pattern observed in the data: coins that had already appreciated significantly tended to revert in the subsequent period. On small caps, recent appreciation was positively correlated with further appreciation — a momentum pattern. Whether these patterns persist out of sample remains an open question.
 
@@ -203,21 +197,25 @@ Several design choices distinguish this backtester from naive approaches:
 
 This test spans a complete market cycle: the 2022 crash, the 2023 recovery, and the 2024 bull run.
 
-| Metric | Equal-Weighted | Evidence-Weighted |
-|---|---|---|
-| 7d correlation with returns | 0.021 | 0.054 |
-| Top 20% avg weekly return | +1.15% | +1.99% |
-| Top 20% avg monthly return | +3.25% | +4.29% |
+
+| Metric                      | Equal-Weighted | Evidence-Weighted |
+| --------------------------- | -------------- | ----------------- |
+| 7d correlation with returns | 0.021          | 0.054             |
+| Top 20% avg weekly return   | +1.15%         | +1.99%            |
+| Top 20% avg monthly return  | +3.25%         | +4.29%            |
+
 
 The evidence-weighted scoring showed a modestly stronger correlation with subsequent returns compared to equal weighting across the sample period.
 
 ### Small-Cap Results (2 Years: Apr 2024 – Mar 2026, 50 coins, 3,140 observations)
 
-| Metric | Result |
-|---|---|
-| 7d score-return correlation | 0.068 |
+
+| Metric                       | Result          |
+| ---------------------------- | --------------- |
+| 7d score-return correlation  | 0.068           |
 | Top 20% vs bottom 20% spread | +2.77% per week |
-| Top 20% avg 30-day return | +5.63%/month |
+| Top 20% avg 30-day return    | +5.63%/month    |
+
 
 Small caps showed the strongest score-return correlation of any universe in the sample, though the absolute magnitude remains modest and is not a reliable basis for trading decisions.
 
@@ -234,11 +232,13 @@ This observation is historical and simulated. Real-world execution would involve
 
 ### Bear Market Results (Oct 2025 – Mar 2026, 584 observations)
 
-| Metric | Result |
-|---|---|
-| Weighted top 20% | +3.48% avg return |
+
+| Metric              | Result            |
+| ------------------- | ----------------- |
+| Weighted top 20%    | +3.48% avg return |
 | Weighted bottom 20% | -6.02% avg return |
-| Spread | +9.50% |
+| Spread              | +9.50%            |
+
 
 The scoring system's correlation with returns appeared most pronounced in the bearish sample period, where the primary observed pattern was avoidance of the lowest-scoring coins.
 
@@ -274,13 +274,15 @@ CryptoPanda is designed for automated daily operation. Two execution modes are p
 
 Infrastructure costs are modest:
 
-| Component | Monthly Cost |
-|---|---|
-| CoinPaprika Starter (5-year historical data, 400K calls/month) | $99 |
-| LLM API calls (~$1–3/run, or $0 with local Ollama) | ~$30–90 |
-| SMTP delivery (Brevo free tier, 300 emails/day) | $0 |
-| Compute (EC2 t2.micro or equivalent) | $5–20 |
-| **Total** | **~$100–120** |
+
+| Component                                                      | Monthly Cost  |
+| -------------------------------------------------------------- | ------------- |
+| CoinPaprika Starter (5-year historical data, 400K calls/month) | $99           |
+| LLM API calls (~$1–3/run, or $0 with local Ollama)             | ~$30–90       |
+| SMTP delivery (Brevo free tier, 300 emails/day)                | $0            |
+| Compute (EC2 t2.micro or equivalent)                           | $5–20         |
+| **Total**                                                      | **~$100–120** |
+
 
 The cost structure reflects a deliberate philosophy of earning each dependency. Earlier versions of the tool included the Santiment API ($100/month) for on-chain metrics, the CryptoNews API for news articles, tweet counting, event detection, and keyword matching — totalling approximately $170/month. After systematic backtesting revealed that none of these additions measurably improved the scoring system's correlation with returns, they were removed. News analysis was redesigned as a free second stage using Google News RSS and LLM-powered sentiment (replacing VADER, which lacked crypto-specific understanding). The tool's analytical performance improved whilst costs decreased — a useful reminder that more data does not always improve analytical outcomes.
 
@@ -336,3 +338,4 @@ Readers are solely responsible for their own decisions. Always conduct your own 
 - [OpenAI API](https://openai.com/) / [Anthropic API](https://anthropic.com/) — LLM providers for news analysis and commentary.
 - [CoinGecko API](https://www.coingecko.com/en/api) — Free alternative for historical price data (365-day limit).
 - [VADER Sentiment Analysis](https://github.com/cjhutto/vaderSentiment) — Fallback sentiment scoring when LLM is unavailable.
+
