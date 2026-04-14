@@ -38,6 +38,7 @@ from report_generation import (
     generate_html_report_with_recommendations,
     send_email_with_report,
 )
+from backtesting import run_backtesting, generate_backtesting_html
 from config import (
     TEST_ONLY,
     CUMULATIVE_SCORE_REPORTING_THRESHOLD,
@@ -49,6 +50,7 @@ from config import (
     MAX_WORKERS,
     COIN_TIMEOUT,
 )
+from sqlalchemy import create_engine
 
 from coinpaprika import client as Coinpaprika
 
@@ -366,7 +368,22 @@ def monitor_coins_and_send_report():
             gpt_recommendations = gpt4o_summarize_each_coin(df)
             logger.debug("GPT-4o recommendations generated.")
 
-            html_report = generate_html_report_with_recommendations(report_entries, None, gpt_recommendations, market_regime=market_regime)
+            # --- Backtesting ---
+            backtesting_html = ""
+            try:
+                db_connection_str = (
+                    f"postgresql://{os.getenv('AURORA_USER')}:{os.getenv('AURORA_PASSWORD')}"
+                    f"@{os.getenv('AURORA_HOST')}:{os.getenv('AURORA_PORT', 5432)}/{os.getenv('AURORA_DB')}"
+                )
+                bt_engine = create_engine(db_connection_str)
+                backtest_results = run_backtesting(bt_engine)
+                backtesting_html = generate_backtesting_html(backtest_results)
+                bt_engine.dispose()
+                logger.info("Backtesting report generated.")
+            except Exception as e:
+                logger.error(f"Backtesting failed (non-fatal): {e}")
+
+            html_report = generate_html_report_with_recommendations(report_entries, None, gpt_recommendations, market_regime=market_regime, backtesting_html=backtesting_html)
             logger.debug("HTML report generated successfully.")
 
             attachment_path = save_report_to_excel(report_entries)

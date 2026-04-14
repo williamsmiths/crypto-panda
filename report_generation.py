@@ -99,7 +99,7 @@ def utc_today_iso() -> str:
 # HTML report rendering
 # ----------------------------
 
-def generate_html_report_with_recommendations(report_entries, digest_summary, gpt_recommendations, market_regime="unknown"):
+def generate_html_report_with_recommendations(report_entries, digest_summary, gpt_recommendations, market_regime="unknown", backtesting_html=""):
     """
     Generates an HTML report with summaries from the report entries, GPT-4o recommendations, and a plot of the top coins.
     """
@@ -191,6 +191,10 @@ def generate_html_report_with_recommendations(report_entries, digest_summary, gp
 
             safe_coin_id = html_mod.escape(matching_entry['coin_id']) if matching_entry else ''
             coin_url = f"https://coinpaprika.com/coin/{safe_coin_id}/" if matching_entry else '#'
+            # Derive slug for CoinGecko/CoinMarketCap from coin_id (e.g. "btc-bitcoin" -> "bitcoin")
+            coin_slug = safe_coin_id.split('-', 1)[1] if safe_coin_id and '-' in safe_coin_id else ''
+            coingecko_url = f"https://www.coingecko.com/en/coins/{coin_slug}" if coin_slug else '#'
+            coinmarketcap_url = f"https://coinmarketcap.com/currencies/{coin_slug}/" if coin_slug else '#'
             cumulative_score_percentage = matching_entry.get('cumulative_score_percentage', 'N/A') if matching_entry else 'N/A'
             background_color = "#d4edda" if str(item.get("recommendation", '')).strip().lower() == "yes" else "#ffe5b4"
             coin_name = html_mod.escape(str(item.get("coin", "")).title())
@@ -202,12 +206,18 @@ def generate_html_report_with_recommendations(report_entries, digest_summary, gp
 
             recommendation_items += f"""
             <li style="font-size:14px;line-height:1.6;margin-bottom:10px;background-color:{background_color};padding:10px;border-radius:5px;">
-                <b>{coin_name}</b> - {html_mod.escape(str(item.get("reason","")))}<br>
+                <b><a href="{coin_url}" target="_blank" style="color:#264653;text-decoration:none;">{coin_name}</a></b> - {html_mod.escape(str(item.get("reason","")))}<br>
                 <strong>Weighted Score:</strong> {weighted_pct}% &nbsp;|&nbsp;
                 <strong>Equal Score:</strong> {cumulative_score_percentage}%<br>
                 <strong>Exit Targets:</strong> Take Profit: +{tp_target}% &nbsp;|&nbsp; Stop Loss: -{sl_target}%<br>
                 <span style="font-size:12px;color:#666;">{rsi_info}</span><br>
-                <a href="{coin_url}" target="_blank" style="color:#0077cc;text-decoration:none;">More Info</a>
+                <span style="font-size:13px;">
+                    <a href="{coin_url}" target="_blank" style="color:#0077cc;text-decoration:none;">CoinPaprika</a>
+                    &nbsp;|&nbsp;
+                    <a href="{coingecko_url}" target="_blank" style="color:#0077cc;text-decoration:none;">CoinGecko</a>
+                    &nbsp;|&nbsp;
+                    <a href="{coinmarketcap_url}" target="_blank" style="color:#0077cc;text-decoration:none;">CoinMarketCap</a>
+                </span>
             </li>
             """
         recommendations_html = f"""
@@ -264,6 +274,11 @@ def generate_html_report_with_recommendations(report_entries, digest_summary, gp
                             </td>
                         </tr>
                         {plot_html}
+                        <tr>
+                            <td>
+                                {backtesting_html}
+                            </td>
+                        </tr>
                         <tr>
                             <td style="padding:20px;">
                                 <p style="text-align:center;color:#777;font-size:12px;margin:0;">Report generated on {utcnow_iso()}</p>
